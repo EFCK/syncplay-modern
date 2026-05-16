@@ -38,6 +38,26 @@ from syncplay.ui.modern.userStrip import UserStrip
 from syncplay.ui.modern.videoWidget import VideoWidget
 
 
+class _MouseEdgeFilter(QtCore.QObject):
+    """Application-wide mouse-move filter used while fullscreen.
+
+    Forwards every MouseMove event to MainWindow so it can reveal the chat
+    overlay when the cursor approaches the right edge of the screen.
+    """
+
+    def __init__(self, window):
+        super().__init__(window)
+        self._window = window
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.MouseMove:
+            try:
+                self._window._fs_on_global_mouse_move(event.globalPosition().toPoint())
+            except Exception:
+                pass
+        return False  # never consume the event
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, passedBar=None) -> None:  # noqa: N803 — keep upstream name
         super().__init__()
@@ -62,14 +82,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fileinfo: Optional[dict] = None
         self._settings_dialog: Optional[SettingsDialog] = None
 
+        # Fullscreen state
+        self._is_fullscreen = False
+        self._overlay: Optional[QtWidgets.QFrame] = None
+        self._saved_splitter_sizes: list[int] = []
+        self._mouse_filter = _MouseEdgeFilter(self)
+        self._autohide_timer = QtCore.QTimer(self)
+        self._autohide_timer.setSingleShot(True)
+        self._autohide_timer.timeout.connect(self._fs_hide_overlay)
+
         # --- Right: user strip on top, sidebar tabs below
         self._user_strip = UserStrip()
         self._chat_panel = ChatPanel()
         self._errors_panel = ErrorsPanel()
         self._tabs = SidebarTabs(self._chat_panel, self._errors_panel)
 
-        right_container = QtWidgets.QWidget()
-        right_layout = QtWidgets.QVBoxLayout(right_container)
+        self._right_container = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(self._right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
         right_layout.addWidget(self._user_strip, 0)
@@ -78,7 +107,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- Splitter
         self._splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         self._splitter.addWidget(self.videoWidget)
-        self._splitter.addWidget(right_container)
+        self._splitter.addWidget(self._right_container)
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 1)
         self._splitter.setSizes([700, 320])
@@ -400,14 +429,133 @@ class MainWindow(QtWidgets.QMainWindow):
             self._brief_status("Speed 1.00x")
 
     def _kb_toggle_fullscreen(self):
-        if self.isFullScreen():
-            self.showNormal()
+        if self._is_fullscreen:
+            self._fs_exit()
         else:
-            self.showFullScreen()
+            self._fs_enter()
 
     def _kb_exit_fullscreen(self):
-        if self.isFullScreen():
-            self.showNormal()
+        if self._is_fullscreen:
+            self._fs_exit()
+
+    # --- Fullscreen + chat overlay ---------------------------------------
+
+    OVERLAY_EDGE_PX = 40        # mouse-X within this many px of right edge → reveal
+    OVERLAY_WIDTH_FRACTION = 0.28  # overlay covers this much of the screen width
+
+    def _fs_enter(self) -> None:
+        if self._is_fullscreen:
+            return
+        self._is_fullscreen = True
+
+        # Save state and hide normal chrome
+        self._saved_splitter_sizes = self._splitter.sizes()
+        self.menuBar().setVisible(False)
+        self.statusBar().setVisible(False)
+
+        # Build the overlay frame parented to MainWindow so it floats above
+        # the video area without becoming a separate window.
+        self._overlay = QtWidgets.QFrame(self)
+        self._overlay.setObjectName("fsOverlay")
+        self._overlay.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self._overlay.setStyleSheet(
+            "QFrame#fsOverlay { background: rgba(20, 20, 20, 217); "
+            "border-left: 1px solid #444; }"
+        )
+        layout = QtWidgets.QVBoxLayout(self._overlay)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._right_container.setParent(self._overlay)
+        layout.addWidget(self._right_container)
+        self._overlay.hide()
+
+        # Let the video take the whole window.
+        total = self._splitter.width() or self.width()
+        self._splitter.setSizes([total, 0])
+
+        self.showFullScreen()
+        self._fs_reposition_overlay()
+
+        # Track mouse globally so we can reveal on edge approach even when
+        # the cursor is over the video widget.
+        QtWidgets.QApplication.instance().installEventFilter(self._mouse_filter)
+
+        autohide = 3000
+        if self._client is not None:
+            cfg = getattr(self._client, "_config", {}) or {}
+            try:
+                autohide = int(cfg.get("fullscreenAutohideMs") or 3000)
+            except (TypeError, ValueError):
+                autohide = 3000
+        self._autohide_timer.setInterval(max(500, autohide))
+
+    def _fs_exit(self) -> None:
+        if not self._is_fullscreen:
+            return
+        self._is_fullscreen = False
+        self._autohide_timer.stop()
+        QtWidgets.QApplication.instance().removeEventFilter(self._mouse_filter)
+
+        # Reparent the chat sidebar back into the splitter.
+        overlay = self._overlay
+        self._overlay = None
+        self._right_container.setParent(None)
+        self._splitter.insertWidget(1, self._right_container)
+        if self._saved_splitter_sizes:
+            self._splitter.setSizes(self._saved_splitter_sizes)
+
+        self.menuBar().setVisible(True)
+        self.statusBar().setVisible(True)
+        self.showNormal()
+
+        if overlay is not None:
+            overlay.setParent(None)
+            overlay.deleteLater()
+
+    def _fs_reposition_overlay(self) -> None:
+        if self._overlay is None:
+            return
+        width = max(280, int(self.width() * self.OVERLAY_WIDTH_FRACTION))
+        self._overlay.setGeometry(self.width() - width, 0, width, self.height())
+
+    def _fs_reveal_overlay(self) -> None:
+        if self._overlay is None:
+            return
+        if not self._overlay.isVisible():
+            self._fs_reposition_overlay()
+            self._overlay.show()
+            self._overlay.raise_()
+        self._autohide_timer.start()
+
+    def _fs_hide_overlay(self) -> None:
+        if self._overlay is None:
+            return
+        # Don't hide while user is actively typing in chat.
+        focus = QtWidgets.QApplication.focusWidget()
+        if focus is not None and focus is not self.videoWidget:
+            parent = focus
+            while parent is not None:
+                if parent is self._overlay:
+                    self._autohide_timer.start()
+                    return
+                parent = parent.parentWidget()
+        self._overlay.hide()
+
+    def _fs_on_global_mouse_move(self, global_pos: QtCore.QPoint) -> None:
+        if not self._is_fullscreen:
+            return
+        # Map to MainWindow coordinates
+        local = self.mapFromGlobal(global_pos)
+        near_right = local.x() >= self.width() - self.OVERLAY_EDGE_PX
+        if near_right and 0 <= local.y() < self.height():
+            self._fs_reveal_overlay()
+        elif self._overlay is not None and self._overlay.isVisible():
+            self._autohide_timer.start()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._is_fullscreen:
+            self._fs_reposition_overlay()
 
     def _brief_status(self, text: str, duration_ms: int = 1500) -> None:
         """Quick non-modal feedback in the status bar."""

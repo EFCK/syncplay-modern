@@ -73,6 +73,17 @@ class MessageRouter:
                 timestamp=time.time(),
             )
         )
+        # Best-effort connection-state propagation. The client formats these
+        # strings via getMessage(), so we sniff for stable substrings. If the
+        # localization ever changes, the status dot will simply stop updating;
+        # nothing else breaks.
+        lower = message.lower()
+        if "successfully connected" in lower or "successfully reached" in lower:
+            self._emit(ConnectionState(state=ConnectionStateKind.CONNECTED, detail=message))
+        elif "attempting to connect" in lower or "attempting secure connection" in lower:
+            self._emit(ConnectionState(state=ConnectionStateKind.CONNECTING, detail=message))
+        elif "attempting to reconnect" in lower or "reconnecting" in lower:
+            self._emit(ConnectionState(state=ConnectionStateKind.RECONNECTING, detail=message))
 
     def showOSDMessage(
         self,
@@ -95,7 +106,13 @@ class MessageRouter:
                 timestamp=time.time(),
             )
         )
-        if "disconnection" in message.lower() or "disconnect" in message.lower():
+        lower = message.lower()
+        if (
+            "connection with server lost" in lower
+            or "disconnection" in lower
+            or "connection failed" in lower
+            or "disconnect" in lower
+        ):
             self._emit(ConnectionState(state=ConnectionStateKind.DISCONNECTED, detail=message))
 
     def showDebugMessage(self, message: str) -> None:
