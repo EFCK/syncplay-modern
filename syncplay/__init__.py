@@ -1,0 +1,5 @@
+version = '1.7.5'
+revision = ' stable'
+milestone = 'Yoitsu'
+release_number = '117'
+projectURL = 'https://syncplay.pl/'
