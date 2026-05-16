@@ -18,8 +18,13 @@ class InvalidConfigValue(Exception):
         Exception.__init__(self, message)
 
 
+_DIALOG_FIELDS = ("name", "host", "port", "room", "password")
+
+
 class ConfigurationGetter(object):
     def __init__(self):
+        self._skip_dialog_field_persist: set = set()
+        self._original_dialog_values: dict = {}
         self._config = {
             "host": "syncplay.pl",
             "port": constants.DEFAULT_PORT,
@@ -437,9 +442,20 @@ class ConfigurationGetter(object):
             sys.exit()
         else:
             from syncplay.ui.modern.onboarding import Onboarding as GuiConfiguration
+            # Snapshot the five dialog fields so _saveConfig can revert
+            # them if the user picks "Run" instead of "Update Config and
+            # Run". Snapshot taken from _config, which already reflects
+            # INI + CLI overrides at this point.
+            original = {k: self._config.get(k) for k in _DIALOG_FIELDS}
             gc = GuiConfiguration(self._config, error=error)
             gc.setAvailablePaths(self._playerFactory.getAvailablePlayerPaths())
             gc.run()
+            if not gc.should_persist_dialog_fields():
+                self._skip_dialog_field_persist = set(_DIALOG_FIELDS)
+                self._original_dialog_values = original
+            else:
+                self._skip_dialog_field_persist = set()
+                self._original_dialog_values = {}
             return gc.getProcessedConfiguration()
 
     def __wasOptionChanged(self, parser, section, option):
@@ -453,18 +469,32 @@ class ConfigurationGetter(object):
         changed = False
         if self._config['noStore']:
             return
-        parser = SafeConfigParserUnicode(strict=False)
-        parser.read_file(codecs.open(iniPath, "r", "utf_8_sig"))
-        for section, options in list(self._iniStructure.items()):
-            if not parser.has_section(section):
-                parser.add_section(section)
-                changed = True
-            for option in options:
-                if self.__wasOptionChanged(parser, section, option):
+        # If the user picked "Run" instead of "Update Config and Run",
+        # the in-memory _config still has the just-typed values (so the
+        # current session connects correctly), but we don't want to
+        # persist them. Swap pre-dialog values in for the write, restore
+        # session values afterwards.
+        session_values = {}
+        for option in self._skip_dialog_field_persist:
+            if option in self._original_dialog_values:
+                session_values[option] = self._config[option]
+                self._config[option] = self._original_dialog_values[option]
+        try:
+            parser = SafeConfigParserUnicode(strict=False)
+            parser.read_file(codecs.open(iniPath, "r", "utf_8_sig"))
+            for section, options in list(self._iniStructure.items()):
+                if not parser.has_section(section):
+                    parser.add_section(section)
                     changed = True
-                parser.set(section, option, str(self._config[option]).replace('%', '%%'))
-        if changed:
-            parser.write(codecs.open(iniPath, "wb", "utf_8_sig"))
+                for option in options:
+                    if self.__wasOptionChanged(parser, section, option):
+                        changed = True
+                    parser.set(section, option, str(self._config[option]).replace('%', '%%'))
+            if changed:
+                parser.write(codecs.open(iniPath, "wb", "utf_8_sig"))
+        finally:
+            for option, value in session_values.items():
+                self._config[option] = value
 
     def _forceGuiPrompt(self):
         from syncplay.ui.modern.onboarding import Onboarding as GuiConfiguration
@@ -573,7 +603,11 @@ class ConfigurationGetter(object):
         # Arguments not validated yet - booleans are still text values
         if self._config['language']:
             setLanguage(self._config['language'])
-        if self._config['forceGuiPrompt'] == "True" and not self._config['noGui'] and not utils.isWindowsConsole():
+        # Always show the connect dialog in GUI mode (pre-filled from
+        # the saved INI + any CLI overrides). The upstream
+        # `forceGuiPrompt` INI flag is left in the structure for
+        # rebase compatibility but no longer gates this call.
+        if not self._config['noGui'] and not utils.isWindowsConsole():
             self._forceGuiPrompt()
         self._checkConfig()
         self._saveConfig(iniPath)
