@@ -5,9 +5,43 @@ Built around an embedded libvlc player so video and chat live in the same
 window, with a Teleparty-style layout: video on the left, a collapsible chat
 panel on the right.
 
-> **Status:** Early development. The protocol layer is feature-complete (it
-> reuses upstream Syncplay's) but the UI is being rebuilt from scratch. Do
-> not expect anything to work yet.
+> **Status:** v0.1.0-alpha. All eight initial phases are merged and tagged.
+> The protocol layer is reused unchanged from upstream Syncplay; the GUI and
+> player adapter have been replaced. Linux is the primary build target so
+> far — Windows/macOS bundles are not yet verified.
+
+## Aim of this project
+
+Syncplay's protocol, sync algorithm, and server ecosystem (`syncplay.pl`) are
+excellent and have been stable for years. The user experience has not aged as
+well: chat lives in a separate window from the video, system events and
+user chat are jumbled together in a single text stream, errors interrupt
+conversation in red, and notifications overlay onto the video by default.
+
+`syncplay-modern` keeps everything that already works — the network protocol,
+the desync correction, the room/identity model, the existing community
+servers — and **replaces only the surface**. The goals, in order:
+
+1. **Stay protocol-compatible.** A `syncplay-modern` user joining a room
+   alongside upstream Syncplay users must Just Work. No new servers, no new
+   accounts, no fragmentation of the community.
+2. **One window, like Teleparty.** Video on the left, chat on the right,
+   chat collapsible. No second VLC window to alt-tab to.
+3. **Separate chat from noise.** Sync events (paused/seeked/joined) are
+   small gray inline lines in the Chat tab. Errors live in their own Errors
+   tab with a badge counter. Chat is for chat.
+4. **Sensible defaults.** Chat-on-video overlays off by default. OSD
+   notifications off by default. The settings panel surfaces the four
+   things people actually change (audio track, subtitle track, subtitle
+   delay, language); everything else is in collapsible Advanced.
+5. **VLC keyboard muscle memory.** `f` fullscreen, `space` pause, arrows
+   seek, `j/l` audio delay, `g/h` subtitle delay, `[/]` speed — all
+   focus-aware so they don't fire while you're typing in chat.
+6. **Cross-platform desktop app**, distributable as a single bundle on
+   Linux/Windows/macOS.
+
+See [`plans/`](plans/) for the design document, the record of initial
+changes, and what's planned next.
 
 ## Based on Syncplay
 
@@ -36,20 +70,87 @@ if your usage grows — the community servers are donated capacity.
 
 See `docs/superpowers/specs/` for the design spec and implementation phases.
 
-## Running from source
+## How to run
+
+### Prerequisites
+
+- **VLC installed system-wide.** The app links against the system's
+  libvlc at runtime. You don't need the VLC GUI, only the library:
+  - Linux: `sudo apt install vlc` (Debian/Ubuntu) or equivalent
+  - Windows: install VLC from https://www.videolan.org/
+  - macOS: install VLC from https://www.videolan.org/ or `brew install
+    --cask vlc`
+- **Python 3.11 or 3.12.** `python-vlc` is brittle on 3.13+, and the
+  `pyproject.toml` pins `>=3.11`. 3.12 is the recommended version.
+- **`uv`** for environment management: see
+  https://docs.astral.sh/uv/getting-started/installation/
+- **Linux only:** on Wayland you also need `libxcb-cursor0` because the
+  app forces the xcb Qt platform plugin (libvlc can't draw into a
+  Wayland surface in v1):
+  `sudo apt install libxcb-cursor0`
+
+### Run from source
 
 ```bash
-# Requires uv (https://docs.astral.sh/uv/) and VLC installed system-wide.
-git clone https://github.com/<you>/syncplay-modern.git
+git clone https://github.com/EFCK/syncplay-modern.git
 cd syncplay-modern
-uv venv
-uv pip install -e .
-.venv/bin/python syncplayClient.py --name <nick> --room <room>
+uv sync                          # creates .venv and installs deps
+uv run syncplayClient.py
 ```
 
-End-users do not need VLC's GUI — only `libvlc.so.5` (Linux) /
-`libvlc.dll` (Windows) / `libvlc.dylib` (macOS), which the standard VLC
-install supplies.
+On first run, an onboarding dialog asks for nickname, room, and server
+(defaults to `syncplay.pl:8997`). Subsequent runs read the saved INI
+and go straight to the main window.
+
+To skip onboarding and pass everything on the command line:
+
+```bash
+uv run syncplayClient.py --name alice --room movie-night
+```
+
+### Open a video
+
+You can:
+
+- Drag and drop a video file onto the video panel.
+- Use **File → Open File…** in the menu bar.
+- Upstream's `--player-path` argument is ignored; the embedded libvlc
+  player is selected automatically.
+
+### Keyboard shortcuts
+
+These are focus-aware — they fire when the video widget has focus, not
+when you're typing in chat. Click on the video (or press Tab to focus
+it) to activate them.
+
+| Key                | Action                          |
+|--------------------|---------------------------------|
+| `f`                | Toggle fullscreen               |
+| `Esc`              | Exit fullscreen                 |
+| `space` / `k`      | Play / pause                    |
+| `←` / `→`          | Seek ±5 seconds                 |
+| `Shift+←` / `→`    | Seek ±10 seconds                |
+| `Ctrl+←` / `→`     | Seek ±60 seconds                |
+| `↑` / `↓`          | Volume ±5%                      |
+| `m`                | Mute toggle                     |
+| `j` / `l`          | Audio delay ±50 ms              |
+| `g` / `h`          | Subtitle delay ±50 ms           |
+| `[` / `]`          | Playback speed ±10%             |
+| `=`                | Reset speed to 1.0×             |
+
+### Run the prebuilt Linux bundle
+
+If you don't want a Python environment on the host, build the bundle
+once (see [Building a distributable bundle](#building-a-distributable-bundle))
+and run it directly:
+
+```bash
+./build/build-linux.sh                          # one-time, ~2 min
+./dist/syncplay-modern/syncplay-modern
+```
+
+The bundle still needs VLC installed on the host (it links libvlc
+dynamically) but doesn't need Python or `uv`.
 
 ## Building a distributable bundle
 
