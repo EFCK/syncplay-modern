@@ -19,6 +19,7 @@ from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from syncplay import constants
+from syncplay.players import embedded_vlc
 
 from syncplay.ui.modern.chatPanel import ChatPanel
 from syncplay.ui.modern.errorsPanel import ErrorsPanel
@@ -33,6 +34,7 @@ from syncplay.ui.modern.events import (
 from syncplay.ui.modern.messageRouter import MessageRouter
 from syncplay.ui.modern.sidebarTabs import SidebarTabs
 from syncplay.ui.modern.userStrip import UserStrip
+from syncplay.ui.modern.videoWidget import VideoWidget
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -46,15 +48,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._router = MessageRouter()
         self._router.subscribe(self._on_router_event)
 
-        # --- Left: placeholder video area (Phase 2; libvlc lands in Phase 3)
-        self._video_placeholder = QtWidgets.QLabel(
-            "video plays here (Phase 3)",
-            alignment=QtCore.Qt.AlignCenter,
-        )
-        self._video_placeholder.setStyleSheet(
-            "background: #111; color: #888; font-size: 14px;"
-        )
-        self._video_placeholder.setMinimumSize(360, 240)
+        # --- Left: embedded libvlc render surface
+        self.videoWidget = VideoWidget()
+        self.videoWidget.fileDropped.connect(self._on_file_dropped)
+        # Register with the player module — the EmbeddedVlcPlayer instance
+        # (constructed later, when the reactor calls EmbeddedVlcPlayer.run)
+        # picks this up to attach libvlc's render surface.
+        embedded_vlc.set_video_widget(self.videoWidget)
 
         # --- Right: user strip on top, sidebar tabs below
         self._user_strip = UserStrip()
@@ -71,13 +71,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # --- Splitter
         self._splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        self._splitter.addWidget(self._video_placeholder)
+        self._splitter.addWidget(self.videoWidget)
         self._splitter.addWidget(right_container)
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 1)
         self._splitter.setSizes([700, 320])
 
         self.setCentralWidget(self._splitter)
+
+        # --- Menu bar
+        self._build_menu()
 
         # --- Status bar
         self._status_room = QtWidgets.QLabel("(no room)")
@@ -251,6 +254,57 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if hasattr(self._client, "sendChat"):
             self._client.sendChat(text)
+
+    def _on_file_dropped(self, path: str) -> None:
+        self._open_local_file(path)
+
+    def _open_local_file(self, path: str) -> None:
+        if not path:
+            return
+        if self._client is None or not hasattr(self._client, "openFile"):
+            return
+        try:
+            self._client.openFile(path, fromUser=True)
+        except TypeError:
+            # Older client signature
+            self._client.openFile(path)
+
+    def _build_menu(self) -> None:
+        bar = self.menuBar()
+        file_menu = bar.addMenu("&File")
+
+        open_file = QtGui.QAction("&Open File…", self)
+        open_file.setShortcut(QtGui.QKeySequence.Open)
+        open_file.triggered.connect(self._dialog_open_file)
+        file_menu.addAction(open_file)
+
+        open_url = QtGui.QAction("Open &URL…", self)
+        open_url.triggered.connect(self._dialog_open_url)
+        file_menu.addAction(open_url)
+
+        file_menu.addSeparator()
+
+        quit_act = QtGui.QAction("&Quit", self)
+        quit_act.setShortcut(QtGui.QKeySequence.Quit)
+        quit_act.triggered.connect(QtWidgets.QApplication.quit)
+        file_menu.addAction(quit_act)
+
+    def _dialog_open_file(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Open Media",
+            "",
+            "Media files (*.mkv *.mp4 *.avi *.mov *.webm *.m4v *.flv *.wmv *.mpg *.mpeg *.ts);;All files (*)",
+        )
+        if path:
+            self._open_local_file(path)
+
+    def _dialog_open_url(self) -> None:
+        url, ok = QtWidgets.QInputDialog.getText(
+            self, "Open URL", "Stream URL:", QtWidgets.QLineEdit.Normal, ""
+        )
+        if ok and url.strip():
+            self._open_local_file(url.strip())
 
     def _render_chat_self(self, username: str, text: str) -> None:
         self._chat_panel.render_chat(

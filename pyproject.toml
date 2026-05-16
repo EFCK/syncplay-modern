@@ -7,9 +7,20 @@ name = "syncplay-modern"
 dynamic = ["version"]
 description = "Modern, single-window Syncplay-compatible client with embedded libvlc"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Efe Can Kirbiyik" }]
+dependencies = [
+    "twisted[tls]>=16.4.0",
+    "certifi>=2018.11.29",
+    "pem>=21.2.0",
+    "pyside6>=6.5.0",
+    "python-vlc>=3.0.20",
+    "appnope>=0.1.0; sys_platform == 'darwin'",
+    "requests>=2.20.0; sys_platform == 'darwin'",
+    "pypiwin32>=223; sys_platform == 'win32'",
+    "zope.interface>=4.4.0; sys_platform == 'win32'",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: X11 Applications :: Qt",
@@ -24,6 +35,7 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Video",
 ]
 
