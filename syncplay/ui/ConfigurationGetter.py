@@ -420,6 +420,10 @@ class ConfigurationGetter(object):
                 for option in options:
                     if parser.has_option(section, option):
                         self._config[option] = parser.get(section, option)
+        # Force-start every session as not-ready, regardless of the
+        # saved INI value. The Room tab's Ready button is the only way
+        # to flip the local user to ready in this fork.
+        self._config['readyAtStart'] = False
 
     def _checkConfig(self):
         try:

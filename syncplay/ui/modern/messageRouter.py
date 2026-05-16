@@ -29,6 +29,32 @@ from syncplay.ui.modern.events import (
 Listener = Callable[[object], None]
 
 
+# Substrings that trigger early-return in showMessage. These messages
+# are state changes that the Room tab renders from diffed snapshots —
+# we don't want them duplicated as gray lines in chat. Locale-fragile:
+# matched against the English upstream strings. If a translation
+# changes the wording, the suppression silently degrades to "chat
+# shows the extra line again" — nothing breaks.
+_CHAT_SWALLOWED_SUBSTRINGS = (
+    "loaded file",
+    "is playing",              # playing-notification: "<user> is playing '<file>' (<dur>) in room: '<r>'"
+    "is ready",
+    "is not ready",
+    "no longer ready",
+    "file differences",        # "File differences: ..."
+    "file differs",            # "Your file differs in the following way(s): ..."
+    "appears to be different", # "File you are playing appears to be different from <X>'s"
+    # Connection-status lifecycle. The status dot at the bottom of the
+    # main window reflects the same state visually; no need for the
+    # chat to also narrate it.
+    "attempting to connect",
+    "attempting secure connection",
+    "secure connection established",
+    "successfully connected",
+    "successfully reached",
+)
+
+
 class MessageRouter:
     def __init__(self) -> None:
         self._listeners: List[Listener] = []
@@ -62,21 +88,9 @@ class MessageRouter:
         )
 
     def showMessage(self, message: str, noTimestamp: bool = False, isMotd: bool = False) -> None:
-        # Sync events and informational messages from the client. We do not
-        # try to parse them — the client formats localized strings. We render
-        # them as a "generic" SyncEvent so the chat panel can display a single
-        # gray italic line.
-        self._emit(
-            SyncEvent(
-                kind=SyncEventKind.GENERIC,
-                detail=message,
-                timestamp=time.time(),
-            )
-        )
-        # Best-effort connection-state propagation. The client formats these
-        # strings via getMessage(), so we sniff for stable substrings. If the
-        # localization ever changes, the status dot will simply stop updating;
-        # nothing else breaks.
+        # Connection-state propagation runs BEFORE the swallow-list so
+        # we don't lose connect/disconnect signals even if a future
+        # translation overlaps with a swallowed substring.
         lower = message.lower()
         if "successfully connected" in lower or "successfully reached" in lower:
             self._emit(ConnectionState(state=ConnectionStateKind.CONNECTED, detail=message))
@@ -84,6 +98,20 @@ class MessageRouter:
             self._emit(ConnectionState(state=ConnectionStateKind.CONNECTING, detail=message))
         elif "attempting to reconnect" in lower or "reconnecting" in lower:
             self._emit(ConnectionState(state=ConnectionStateKind.RECONNECTING, detail=message))
+
+        # Suppress lines that the Room tab already renders from diffed
+        # snapshots (ready/file changes). Everything else still goes to
+        # chat as a generic gray sync line.
+        if any(sub in lower for sub in _CHAT_SWALLOWED_SUBSTRINGS):
+            return
+
+        self._emit(
+            SyncEvent(
+                kind=SyncEventKind.GENERIC,
+                detail=message,
+                timestamp=time.time(),
+            )
+        )
 
     def showOSDMessage(
         self,

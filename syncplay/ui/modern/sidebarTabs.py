@@ -1,4 +1,4 @@
-"""Tab strip swapping between ChatPanel and ErrorsPanel with unread badge."""
+"""Tab strip cycling Room / Chat / Errors with an unread badge on Errors."""
 
 from __future__ import annotations
 
@@ -7,13 +7,15 @@ from PySide6 import QtCore, QtWidgets
 
 class SidebarTabs(QtWidgets.QTabWidget):
 
-    CHAT_INDEX = 0
-    ERRORS_INDEX = 1
+    ROOM_INDEX = 0
+    CHAT_INDEX = 1
+    ERRORS_INDEX = 2
 
-    def __init__(self, chat_panel: QtWidgets.QWidget, errors_panel: QtWidgets.QWidget,
-                 parent=None) -> None:
+    def __init__(self, room_panel: QtWidgets.QWidget, chat_panel: QtWidgets.QWidget,
+                 errors_panel: QtWidgets.QWidget, parent=None) -> None:
         super().__init__(parent)
         self._unread = 0
+        self.addTab(room_panel, "Room")
         self.addTab(chat_panel, "Chat")
         self.addTab(errors_panel, "Errors")
         self.currentChanged.connect(self._on_changed)

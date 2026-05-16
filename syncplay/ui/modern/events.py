@@ -81,3 +81,50 @@ class FileInfo:
     name: str
     duration: float
     path: str
+
+
+# --- Room-state events (emitted by RoomState; rendered by RoomPanel) -------
+
+
+@dataclass
+class UserJoined:
+    user: str
+    room: str = ""
+    timestamp: float = 0.0
+
+
+@dataclass
+class UserLeft:
+    user: str
+    room: str = ""
+    timestamp: float = 0.0
+
+
+@dataclass
+class UserReadyChanged:
+    user: str
+    ready: bool
+    timestamp: float = 0.0
+
+
+@dataclass
+class UserFileChanged:
+    user: str
+    filename: str
+    timestamp: float = 0.0
+
+
+@dataclass
+class RoomSnapshot:
+    """Whole-room state after a userlist change.
+
+    `users` is a list of dicts: {name, ready, is_self, filename}. The
+    panel re-renders its user table from this on every snapshot.
+    `current_user` is the local user's name (or None) and `is_ready` is
+    the local user's current ready state (drives the toggle button).
+    """
+
+    users: list = field(default_factory=list)
+    room: str = ""
+    current_user: Optional[str] = None
+    is_ready: bool = False

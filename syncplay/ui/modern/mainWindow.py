@@ -28,10 +28,17 @@ from syncplay.ui.modern.events import (
     ConnectionState,
     ConnectionStateKind,
     ErrorEvent,
+    RoomSnapshot,
     SyncEvent,
+    UserFileChanged,
+    UserJoined,
+    UserLeft,
     UserPresence,
+    UserReadyChanged,
 )
 from syncplay.ui.modern.messageRouter import MessageRouter
+from syncplay.ui.modern.roomPanel import RoomPanel
+from syncplay.ui.modern.roomState import RoomState
 from syncplay.ui.modern.settingsPanel import SettingsDialog
 from syncplay.ui.modern.sidebarTabs import SidebarTabs
 from syncplay.ui.modern.userStrip import UserStrip
@@ -68,6 +75,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._client = None
         self._router = MessageRouter()
         self._router.subscribe(self._on_router_event)
+        self._room_state = RoomState()
+        self._room_state.subscribe(self._on_router_event)
 
         # --- Left: embedded libvlc render surface
         self.videoWidget = VideoWidget()
@@ -94,8 +103,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- Right: user strip on top, sidebar tabs below
         self._user_strip = UserStrip()
         self._chat_panel = ChatPanel()
+        self._room_panel = RoomPanel()
+        self._room_panel.readyToggleRequested.connect(self._on_ready_toggle)
         self._errors_panel = ErrorsPanel()
-        self._tabs = SidebarTabs(self._chat_panel, self._errors_panel)
+        self._tabs = SidebarTabs(self._room_panel, self._chat_panel, self._errors_panel)
 
         self._right_container = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(self._right_container)
@@ -161,9 +172,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self._router.showChatMessage(username, userMessage)
 
     def showMessage(self, message, noTimestamp=False, isMotd=False):
+        # MOTD = server-side message of the day (e.g. "Syncplay latest
+        # is available from http://syncplay.pl/"). Always suppress.
+        if isMotd:
+            return
+        # Upstream's SyncplayClientManager.showChatMessage formats peer
+        # chat as "<username> message" and feeds it through here — it
+        # never calls our showChatMessage. Detect that pattern and
+        # render it as a chat bubble instead of as a gray sync line.
+        chat = self._detect_chat_message(message)
+        if chat is not None:
+            username, text = chat
+            own = self._own_username()
+            is_self = (own is not None and username == own)
+            self._chat_panel.render_chat(
+                ChatMessage(user=username, text=text, is_self=is_self, timestamp=time.time())
+            )
+            return
         self._router.showMessage(message, noTimestamp=noTimestamp, isMotd=isMotd)
         if getattr(constants, "DEBUG_MODE", False):
             print(f"[GUI] {message}", file=sys.stderr, flush=True)
+
+    def _detect_chat_message(self, message: str):
+        # Upstream format: "<{username}> {userMessage}". We don't verify
+        # username is in the current userlist (that check was unreliable
+        # under real upstream timing). Pattern + no whitespace/angles in
+        # the username is enough — false positives on system messages
+        # are rare and cosmetic.
+        if not message or not message.startswith("<"):
+            return None
+        end = message.find("> ")
+        if end < 2:
+            return None
+        username = message[1:end]
+        if not username or any(c in username for c in "<>\n\r\t "):
+            return None
+        text = message[end + 2:]
+        return username, text
 
     def showOSDMessage(self, message, duration=None, OSDType=None, mood=None):
         return  # OSD overlays suppressed — chat panel surfaces equivalents.
@@ -191,6 +236,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 current_room = room_name
         self._user_strip.setRoom(current_room)
         self._user_strip.setUsers(users)
+        # Also feed the Room tab: diff against the previous snapshot and
+        # emit the per-user typed events + a fresh RoomSnapshot.
+        try:
+            self._room_state.update_from_rooms(currentUser, rooms)
+        except Exception:
+            if getattr(constants, "DEBUG_MODE", False):
+                import traceback
+                traceback.print_exc()
 
     def updateRoomName(self, room=""):
         self._status_room.setText(f"Room: {room}" if room else "(no room)")
@@ -277,6 +330,25 @@ class MainWindow(QtWidgets.QMainWindow):
         elif isinstance(event, UserPresence):
             self._user_strip.setRoom(event.room)
             self._user_strip.setUsers(event.users)
+        elif isinstance(event, RoomSnapshot):
+            self._room_panel.set_snapshot(event)
+        elif isinstance(event, UserJoined):
+            # Chat shows upstream's "X has joined the room: 'r'" line on
+            # its own; here we only feed the short form to the Room tab
+            # activity log so it doesn't double up.
+            self._room_panel.append_log_line("joined", f"→ {event.user} joined", event.timestamp)
+        elif isinstance(event, UserLeft):
+            self._room_panel.append_log_line("left", f"← {event.user} left", event.timestamp)
+        elif isinstance(event, UserReadyChanged):
+            cls = "ready" if event.ready else "notready"
+            verb = "is ready" if event.ready else "is not ready"
+            self._room_panel.append_log_line(cls, f"• {event.user} {verb}", event.timestamp)
+        elif isinstance(event, UserFileChanged):
+            self._room_panel.append_log_line(
+                "file",
+                f"♪ {event.user} loaded {event.filename}",
+                event.timestamp,
+            )
 
     def _on_connection_state(self, event: ConnectionState) -> None:
         if event.state == ConnectionStateKind.CONNECTED:
@@ -297,6 +369,36 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if hasattr(self._client, "sendChat"):
             self._client.sendChat(text)
+
+    def _on_ready_toggle(self) -> None:
+        if self._client is None:
+            return
+        # Compute the target from our snapshot, not from
+        # client.userlist.currentUser.isReady(). Upstream's toggleReady
+        # does `not isReady()` — but isReady() can transiently return
+        # None (interpreted as falsy → "not ready"), so toggling from
+        # None re-asserts ready instead of clearing it. Bypassing that
+        # and calling _protocol.setReady(target, True) directly with
+        # our snapshot's known state avoids the ambiguity.
+        target_ready = not self._room_state.last_self_ready()
+        protocol = getattr(self._client, "_protocol", None)
+        if getattr(constants, "DEBUG_MODE", False):
+            print(f"[ready] toggle → target={target_ready}", file=sys.stderr, flush=True)
+        if protocol is not None and hasattr(protocol, "setReady"):
+            try:
+                protocol.setReady(target_ready, True)
+                return
+            except Exception as exc:
+                if getattr(constants, "DEBUG_MODE", False):
+                    print(f"[ready] protocol.setReady failed: {exc}",
+                          file=sys.stderr, flush=True)
+        # Fallback: upstream's wrapper. Works in the common case but
+        # has the None-state ambiguity described above.
+        if hasattr(self._client, "toggleReady"):
+            try:
+                self._client.toggleReady(manuallyInitiated=True)
+            except TypeError:
+                self._client.toggleReady()
 
     def _on_file_dropped(self, path: str) -> None:
         self._open_local_file(path)

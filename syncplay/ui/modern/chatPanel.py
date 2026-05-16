@@ -61,12 +61,17 @@ class ChatPanel(QtWidgets.QWidget):
         self._append(line)
 
     def render_sync(self, event: SyncEvent) -> None:
-        text = html.escape(event.detail)
-        line = (
-            f'<p class="sysline"><span class="timestamp">{self._format_time(event.timestamp)}</span>'
-            f' → {text}</p>'
-        )
-        self._append(line)
+        # Upstream often packs multiple events into one message separated
+        # by literal "\n" newlines (formatted for terminal output).
+        # Render each line as its own paragraph so they don't collapse
+        # into a single run-on gray line.
+        ts = self._format_time(event.timestamp)
+        lines = [line for line in (event.detail or "").splitlines() if line.strip()]
+        for line in lines:
+            self._append(
+                f'<p class="sysline"><span class="timestamp">{ts}</span>'
+                f' → {html.escape(line)}</p>'
+            )
 
     def render_error_notice(self) -> None:
         line = (
@@ -91,6 +96,12 @@ class ChatPanel(QtWidgets.QWidget):
     def _append(self, html_fragment: str) -> None:
         cursor = self._log.textCursor()
         cursor.movePosition(QtGui.QTextCursor.End)
+        # `insertHtml` of a <p> element does NOT start a new QTextDocument
+        # block — successive inserts coalesce into the same paragraph and
+        # CSS margins between <p> tags get ignored. Force a block boundary
+        # before each fragment so each event is its own paragraph.
+        if cursor.position() > 0:
+            cursor.insertBlock()
         cursor.insertHtml(html_fragment)
         # Auto-scroll
         sb = self._log.verticalScrollBar()
