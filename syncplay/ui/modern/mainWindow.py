@@ -32,6 +32,7 @@ from syncplay.ui.modern.events import (
     UserPresence,
 )
 from syncplay.ui.modern.messageRouter import MessageRouter
+from syncplay.ui.modern.settingsPanel import SettingsDialog
 from syncplay.ui.modern.sidebarTabs import SidebarTabs
 from syncplay.ui.modern.userStrip import UserStrip
 from syncplay.ui.modern.videoWidget import VideoWidget
@@ -55,6 +56,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # (constructed later, when the reactor calls EmbeddedVlcPlayer.run)
         # picks this up to attach libvlc's render surface.
         embedded_vlc.set_video_widget(self.videoWidget)
+        embedded_vlc.set_fileinfo_sink(self._on_fileinfo)
+
+        # Latest parsed-media metadata; populated when libvlc parses a file.
+        self._fileinfo: Optional[dict] = None
+        self._settings_dialog: Optional[SettingsDialog] = None
 
         # --- Right: user strip on top, sidebar tabs below
         self._user_strip = UserStrip()
@@ -288,6 +294,53 @@ class MainWindow(QtWidgets.QMainWindow):
         quit_act.setShortcut(QtGui.QKeySequence.Quit)
         quit_act.triggered.connect(QtWidgets.QApplication.quit)
         file_menu.addAction(quit_act)
+
+        edit_menu = bar.addMenu("&Edit")
+        settings_act = QtGui.QAction("&Settings…", self)
+        settings_act.setShortcut("Ctrl+,")
+        settings_act.triggered.connect(self._open_settings)
+        edit_menu.addAction(settings_act)
+
+    def _open_settings(self) -> None:
+        if self._client is None:
+            return
+        config = getattr(self._client, "_config", {}) or {}
+        dialog = SettingsDialog(
+            self,
+            config=config,
+            fileinfo=self._fileinfo,
+            get_player=lambda: getattr(self._client, "_player", None),
+            on_persist=self._persist_setting,
+        )
+        self._settings_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            self._settings_dialog = None
+
+    def _on_fileinfo(self, fileinfo: dict) -> None:
+        self._fileinfo = fileinfo
+        # If a settings dialog is open right now, refresh its dropdowns.
+        if self._settings_dialog is not None:
+            try:
+                self._settings_dialog.set_fileinfo(fileinfo)
+            except Exception:
+                pass
+
+    def _persist_setting(self, key: str, value) -> None:
+        """Forward a settings-dialog change to the on-disk INI and the
+        live config dict the client reads from."""
+        if self._client is not None:
+            cfg = getattr(self._client, "_config", None)
+            if cfg is not None:
+                cfg[key] = value
+        try:
+            from syncplay.ui.ConfigurationGetter import ConfigurationGetter
+            ConfigurationGetter().setConfigOption(key, value)
+        except Exception as exc:
+            if getattr(constants, "DEBUG_MODE", False):
+                print(f"[settings] persist {key} failed: {exc}",
+                      file=sys.stderr, flush=True)
 
     def _dialog_open_file(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
