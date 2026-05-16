@@ -1,24 +1,28 @@
 import os
+
 from syncplay.utils import isWindowsConsole
 
-if "QT_PREFERRED_BINDING" not in os.environ:
-    os.environ["QT_PREFERRED_BINDING"] = os.pathsep.join(
-        ["PySide6", "PySide2", "PySide", "PyQt5", "PyQt4"]
-    )
+os.environ.setdefault("QT_PREFERRED_BINDING", "PySide6")
 
+# Force XWayland on Linux Wayland sessions: libvlc cannot draw into a
+# Wayland surface in v1. Must run before QApplication() is constructed.
+if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
+GraphicalUI = None
 if not isWindowsConsole():
     try:
-        from syncplay.ui.gui import MainWindow as GraphicalUI
-    except (ImportError, AttributeError) as e:
-        pass
+        from syncplay.ui.modern.mainWindow import MainWindow as GraphicalUI
+    except (ImportError, AttributeError):
+        GraphicalUI = None
+
 from syncplay.ui.consoleUI import ConsoleUI
 
 
 def getUi(graphical=True, passedBar=None):
-    if graphical and not isWindowsConsole():
-        ui = GraphicalUI(passedBar=passedBar)
-    else:
-        ui = ConsoleUI()
-        ui.setDaemon(True)
-        ui.start()
+    if graphical and GraphicalUI is not None and not isWindowsConsole():
+        return GraphicalUI(passedBar=passedBar)
+    ui = ConsoleUI()
+    ui.setDaemon(True)
+    ui.start()
     return ui

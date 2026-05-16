@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "syncplay-modern"
+dynamic = ["version"]
+description = "Modern, single-window Syncplay-compatible client with embedded libvlc"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { file = "LICENSE" }
+authors = [{ name = "Efe Can Kirbiyik" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: MacOS X :: Cocoa",
+    "Framework :: Twisted",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+]
+
+[project.scripts]
+syncplay-modern-server = "syncplay.ep_server:main"
+
+[project.gui-scripts]
+syncplay-modern = "syncplay.ep_client:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "syncplay.version" }
+
+[tool.setuptools.packages.find]
+include = ["syncplay*"]

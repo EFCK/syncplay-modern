@@ -1,53 +1,60 @@
-<!---
-# Copyright (C) 2019 Syncplay
-# This file is licensed under the MIT license - http://opensource.org/licenses/MIT
+# syncplay-modern (working name)
 
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+A modern, single-window desktop client for [Syncplay](https://syncplay.pl).
+Built around an embedded libvlc player so video and chat live in the same
+window, with a Teleparty-style layout: video on the left, a collapsible chat
+panel on the right.
 
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
+> **Status:** Early development. The protocol layer is feature-complete (it
+> reuses upstream Syncplay's) but the UI is being rebuilt from scratch. Do
+> not expect anything to work yet.
 
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
--->
+## Based on Syncplay
 
-# Syncplay
-![GitHub Actions build status](https://github.com/Syncplay/syncplay/workflows/Build/badge.svg)
+This project is a derivative of [Syncplay](https://github.com/Syncplay/syncplay),
+licensed under the Apache License 2.0. It speaks the same network protocol,
+so it connects to existing Syncplay servers (`syncplay.pl:8997` by default)
+and is interoperable with the official Syncplay client. The sync algorithm
+and core client logic are reused unchanged; the UI and player adapter are
+replaced.
 
-Solution to synchronize video playback across multiple instances of mpv, VLC, MPC-HC, MPC-BE and mplayer2 over the Internet.
+Please consider running [your own Syncplay server](https://github.com/Syncplay/syncplay#running-the-syncplay-server)
+if your usage grows — the community servers are donated capacity.
 
-## Official website
-https://syncplay.pl
+## What's different from upstream Syncplay
 
-## Download
-https://syncplay.pl/download/
+- Single window: video and chat side by side; chat collapsible
+- Embedded libvlc (no external VLC window)
+- Tabbed sidebar: separate **Chat** and **Errors** tabs so error noise no
+  longer drowns conversation
+- Chat-on-video overlays off by default
+- VLC-style keyboard shortcuts re-implemented inside the app, focus-aware
+- Cleaner settings: language / audio / subtitle / subtitle delay in a Quick
+  panel; everything else under collapsible Advanced
 
-## What does it do
+## Status / roadmap
 
-Syncplay synchronises the position and play state of multiple media players so that the viewers can watch the same thing at the same time.
-This means that when one person pauses/unpauses playback or seeks (jumps position) within their media player then this will be replicated across all media players connected to the same server and in the same 'room' (viewing session).
-When a new person joins they will also be synchronised. Syncplay also includes text-based chat so you can discuss a video as you watch it (or you could use third-party Voice over IP software to talk over a video).
-
-## What it doesn't do
-
-Syncplay is not a file sharing service.
+See `docs/superpowers/specs/` for the design spec and implementation phases.
 
 ## License
 
-This project, the Syncplay released binaries, and all the files included in this repository unless stated otherwise in the header of the file, are licensed under the [Apache License, version 2.0](https://www.apache.org/licenses/LICENSE-2.0.html). A copy of this license is included in the LICENSE file of this repository. Licenses and attribution notices for third-party media are set out in [third-party-notices.txt](syncplay/resources/third-party-notices.txt).
+Apache License 2.0. The original Syncplay copyright headers are preserved
+on files we reuse. New files added in this fork carry their own copyright.
+Third-party dependency licenses are listed in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-## Authors
-* *Initial concept and core internals developer* - Uriziel.
-* *GUI design and current lead developer* - Et0h.
-* *Original SyncPlay code* - Tomasz Kowalczyk (Fluxid), who developed SyncPlay at https://github.com/fluxid/syncplay
-* *Other contributors* - See http://syncplay.pl/about/development/
+## Credits
+
+- **Upstream Syncplay** — protocol, sync algorithm, server, original client
+  - Initial concept & core internals: Uriziel
+  - GUI & long-time lead: Et0h
+  - Original SyncPlay code: Tomasz Kowalczyk (Fluxid)
+  - Full list: https://syncplay.pl/about/development/
+- **This fork** — UI rewrite, libvlc embedding, refactored chat/error split:
+  see `git log` for contributors.
+
+## Trademarks
+
+"Syncplay" is the upstream project's name. This fork is **not** an official
+Syncplay product. The working codename here is `syncplay-modern`; final
+naming will be decided closer to public release.
