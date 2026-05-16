@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 .python-version
+
+# PyInstaller build artifacts (build/*.spec is checked in; the working
+# subdirectory and the dist output are not)
+/dist/
+/build/syncplay-modern/
+*.egg-info/

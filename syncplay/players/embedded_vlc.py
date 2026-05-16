@@ -24,10 +24,39 @@ instantiated.
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Callable, Optional
 
 from syncplay.players.basePlayer import BasePlayer
+
+
+def _ensure_vlc_plugin_path() -> None:
+    """Set VLC_PLUGIN_PATH so libvlc can find its plugins.
+
+    System-installed Python finds them by default, but PyInstaller-frozen
+    builds often can't because the embedded loader strips out the dynamic
+    discovery hints. We probe a small list of canonical locations and set
+    the env var ourselves if needed. No-op on Windows/macOS where the
+    bundled VLC supplies its own plugins dir.
+    """
+    if os.environ.get("VLC_PLUGIN_PATH"):
+        return
+    if sys.platform.startswith("win") or sys.platform == "darwin":
+        return
+    candidates = [
+        "/usr/lib/x86_64-linux-gnu/vlc/plugins",
+        "/usr/lib64/vlc/plugins",
+        "/usr/lib/vlc/plugins",
+        "/usr/local/lib/vlc/plugins",
+    ]
+    for path in candidates:
+        if os.path.isdir(path):
+            os.environ["VLC_PLUGIN_PATH"] = path
+            return
+
+
+_ensure_vlc_plugin_path()
 
 
 _pending_video_widget = None
@@ -53,16 +82,39 @@ def set_fileinfo_sink(sink: Optional[Callable[[dict], None]]) -> None:
 
 
 def _get_instance():
-    """libvlc.Instance is process-wide and expensive — cache it."""
+    """libvlc.Instance is process-wide and expensive — cache it.
+
+    Some libvlc builds (notably PyInstaller-frozen runs where the plugin
+    path discovery is shakier) return None when an arg list is passed.
+    We attempt the preferred arg list first, then fall back to no args.
+    """
     global _vlc_instance
-    if _vlc_instance is None:
-        import vlc
-        _vlc_instance = vlc.Instance([
-            "--no-xlib",            # safer alongside Qt's X11 access
-            "--quiet",
-            "--no-video-title-show",
-            "--no-osd",             # we render our own toasts
-        ])
+    if _vlc_instance is not None:
+        return _vlc_instance
+    import vlc
+    preferred_args = [
+        "--no-xlib",            # safer alongside Qt's X11 access
+        "--quiet",
+        "--no-video-title-show",
+        "--no-osd",             # we render our own toasts
+    ]
+    try:
+        instance = vlc.Instance(preferred_args)
+    except Exception:
+        instance = None
+    if instance is None:
+        # Retry without the arg list — preserves a working player at the
+        # cost of losing some flags (those become defaults).
+        try:
+            instance = vlc.Instance()
+        except Exception:
+            instance = None
+    if instance is None:
+        raise RuntimeError(
+            "libvlc failed to initialise. Is VLC installed? "
+            "(Ubuntu/Debian: 'sudo apt install vlc'.)"
+        )
+    _vlc_instance = instance
     return _vlc_instance
 
 
