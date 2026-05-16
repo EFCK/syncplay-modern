@@ -21,17 +21,17 @@ class InvalidConfigValue(Exception):
 class ConfigurationGetter(object):
     def __init__(self):
         self._config = {
-            "host": None,
+            "host": "syncplay.pl",
             "port": constants.DEFAULT_PORT,
             "name": None,
             "debug": False,
-            "forceGuiPrompt": True,
+            "forceGuiPrompt": False,
             "noGui": False,
             "noStore": False,
             "room": "",
             "roomList": [],
             "password": None,
-            "playerPath": None,
+            "playerPath": "__embedded_vlc__",
             "perPlayerArguments": None,
             "mediaSearchDirectories": None,
             "sharedPlaylistEnabled": True,
@@ -67,11 +67,11 @@ class ConfigurationGetter(object):
             "checkForUpdatesAutomatically": None,
             "lastCheckedForUpdates": "",
             "resetConfig": False,
-            "showOSD": True,
-            "showOSDWarnings": True,
-            "showSlowdownOSD": True,
+            "showOSD": False,
+            "showOSDWarnings": False,
+            "showSlowdownOSD": False,
             "showDifferentRoomOSD": False,
-            "showSameRoomOSD": True,
+            "showSameRoomOSD": False,
             "showNonControllerOSD": False,
             "showContactInfo": True,
             "showDurationNotification": True,
@@ -99,7 +99,12 @@ class ConfigurationGetter(object):
             "alertTimeout": 5,
             "chatTimeout": 7,
             "publicServers": [],
-            "loadPlaylistFromFile": None
+            "loadPlaylistFromFile": None,
+            # syncplay-modern additions
+            "chatOnVideoEnabled": False,
+            "layoutChatCollapsed": False,
+            "fullscreenAutohideMs": 3000,
+            "subtitleDelayDefaultMs": 0,
         }
 
         self._defaultConfig = self._config.copy()
@@ -148,7 +153,9 @@ class ConfigurationGetter(object):
             "chatDirectInput",
             "chatMoveOSD",
             "chatOutputEnabled",
-            "chatOutputFontUnderline"
+            "chatOutputFontUnderline",
+            "chatOnVideoEnabled",
+            "layoutChatCollapsed",
         ]
         self._tristate = [
             "checkForUpdatesAutomatically",
@@ -183,7 +190,9 @@ class ConfigurationGetter(object):
             "chatOSDMargin",
             "notificationTimeout",
             "alertTimeout",
-            "chatTimeout"
+            "chatTimeout",
+            "fullscreenAutohideMs",
+            "subtitleDelayDefaultMs",
         ]
 
         self._hexadecimal = [
@@ -223,7 +232,9 @@ class ConfigurationGetter(object):
                 "chatBottomMargin", "chatDirectInput",
                 "chatMoveOSD", "chatOSDMargin",
                 "notificationTimeout", "alertTimeout",
-                "chatTimeout", "chatOutputEnabled"],
+                "chatTimeout", "chatOutputEnabled",
+                "chatOnVideoEnabled", "layoutChatCollapsed",
+                "fullscreenAutohideMs", "subtitleDelayDefaultMs"],
             "general": [
                 "language", "checkForUpdatesAutomatically",
                 "lastCheckedForUpdates"]
@@ -425,7 +436,7 @@ class ConfigurationGetter(object):
                 input(getMessage("enter-to-exit-prompt"))
             sys.exit()
         else:
-            from syncplay.ui.GuiConfiguration import GuiConfiguration
+            from syncplay.ui.modern.onboarding import Onboarding as GuiConfiguration
             gc = GuiConfiguration(self._config, error=error)
             gc.setAvailablePaths(self._playerFactory.getAvailablePlayerPaths())
             gc.run()
@@ -456,7 +467,7 @@ class ConfigurationGetter(object):
             parser.write(codecs.open(iniPath, "wb", "utf_8_sig"))
 
     def _forceGuiPrompt(self):
-        from syncplay.ui.GuiConfiguration import GuiConfiguration
+        from syncplay.ui.modern.onboarding import Onboarding as GuiConfiguration
         try:
             self._validateArguments()
         except InvalidConfigValue:
@@ -562,7 +573,7 @@ class ConfigurationGetter(object):
         # Arguments not validated yet - booleans are still text values
         if self._config['language']:
             setLanguage(self._config['language'])
-        if (self._config['forceGuiPrompt'] == "True" or not self._config['file']) and not self._config['noGui'] and not utils.isWindowsConsole():
+        if self._config['forceGuiPrompt'] == "True" and not self._config['noGui'] and not utils.isWindowsConsole():
             self._forceGuiPrompt()
         self._checkConfig()
         self._saveConfig(iniPath)
