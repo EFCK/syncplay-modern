@@ -37,6 +37,9 @@ class VideoWidget(QtWidgets.QWidget):
 
         self.setMinimumSize(360, 240)
         self.setAcceptDrops(True)
+        # Accept focus on click and tab — required for keyboard shortcuts
+        # scoped to this widget (Phase 5 shortcut routing).
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
 
         self._placeholder_text = "Drop a file here or use File → Open…"
 
@@ -64,6 +67,12 @@ class VideoWidget(QtWidgets.QWidget):
             media_player.set_xwindow(winid)
 
     # --- Drag and drop ---------------------------------------------------
+
+    def mousePressEvent(self, event):
+        # Click anywhere on the video → take focus so keyboard shortcuts
+        # work without the user having to tab.
+        self.setFocus(QtCore.Qt.MouseFocusReason)
+        super().mousePressEvent(event)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():

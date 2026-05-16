@@ -88,6 +88,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- Menu bar
         self._build_menu()
 
+        # --- Keyboard shortcuts (focus-aware: only fire when the video
+        # widget or its descendants have focus, not when the chat input
+        # has focus).
+        self._install_shortcuts()
+
+        # Default focus → video, so shortcuts work without an extra click
+        self.videoWidget.setFocus()
+
         # --- Status bar
         self._status_room = QtWidgets.QLabel("(no room)")
         self._status_room.setStyleSheet("color:#666;")
@@ -300,6 +308,110 @@ class MainWindow(QtWidgets.QMainWindow):
         settings_act.setShortcut("Ctrl+,")
         settings_act.triggered.connect(self._open_settings)
         edit_menu.addAction(settings_act)
+
+    def _install_shortcuts(self) -> None:
+        """VLC-style keyboard shortcuts, scoped to the video widget."""
+        scope = QtCore.Qt.WidgetWithChildrenShortcut
+
+        def make(seq, handler):
+            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self.videoWidget)
+            sc.setContext(scope)
+            sc.activated.connect(handler)
+            return sc
+
+        # Playback
+        make("Space", self._kb_toggle_pause)
+        make("K", self._kb_toggle_pause)
+        # Seek
+        make("Right", lambda: self._kb_seek(5.0))
+        make("Left", lambda: self._kb_seek(-5.0))
+        make("Shift+Right", lambda: self._kb_seek(10.0))
+        make("Shift+Left", lambda: self._kb_seek(-10.0))
+        make("Ctrl+Right", lambda: self._kb_seek(60.0))
+        make("Ctrl+Left", lambda: self._kb_seek(-60.0))
+        # Volume
+        make("Up", lambda: self._kb_volume(5))
+        make("Down", lambda: self._kb_volume(-5))
+        make("M", self._kb_mute)
+        # Delay tweaks
+        make("J", lambda: self._kb_audio_delay(-50))
+        make("L", lambda: self._kb_audio_delay(50))
+        make("G", lambda: self._kb_subtitle_delay(-50))
+        make("H", lambda: self._kb_subtitle_delay(50))
+        # Speed
+        make("[", lambda: self._kb_speed(1 / 1.1))
+        make("]", lambda: self._kb_speed(1.1))
+        make("=", self._kb_reset_speed)
+        # Fullscreen
+        make("F", self._kb_toggle_fullscreen)
+        make("Escape", self._kb_exit_fullscreen)
+
+    # --- Shortcut handlers ------------------------------------------------
+
+    def _player_or_none(self):
+        if self._client is None:
+            return None
+        return getattr(self._client, "_player", None)
+
+    def _kb_toggle_pause(self):
+        player = self._player_or_none()
+        if player and hasattr(player, "toggle_pause"):
+            player.toggle_pause()
+
+    def _kb_seek(self, delta_s: float):
+        player = self._player_or_none()
+        if player and hasattr(player, "seek_by_seconds"):
+            player.seek_by_seconds(delta_s)
+
+    def _kb_volume(self, delta: int):
+        player = self._player_or_none()
+        if player and hasattr(player, "adjust_volume"):
+            new_vol = player.adjust_volume(delta)
+            self._brief_status(f"Volume {new_vol}%")
+
+    def _kb_mute(self):
+        player = self._player_or_none()
+        if player and hasattr(player, "toggle_mute"):
+            player.toggle_mute()
+            self._brief_status("Muted" if player.is_muted() else "Unmuted")
+
+    def _kb_audio_delay(self, delta_ms: int):
+        player = self._player_or_none()
+        if player and hasattr(player, "adjust_audio_delay_ms"):
+            new_ms = player.adjust_audio_delay_ms(delta_ms)
+            self._brief_status(f"Audio delay {new_ms:+d} ms")
+
+    def _kb_subtitle_delay(self, delta_ms: int):
+        player = self._player_or_none()
+        if player and hasattr(player, "adjust_subtitle_delay_ms"):
+            new_ms = player.adjust_subtitle_delay_ms(delta_ms)
+            self._brief_status(f"Subtitle delay {new_ms:+d} ms")
+
+    def _kb_speed(self, multiplier: float):
+        player = self._player_or_none()
+        if player and hasattr(player, "adjust_speed"):
+            new_rate = player.adjust_speed(multiplier)
+            self._brief_status(f"Speed {new_rate:.2f}x")
+
+    def _kb_reset_speed(self):
+        player = self._player_or_none()
+        if player and hasattr(player, "reset_speed"):
+            player.reset_speed()
+            self._brief_status("Speed 1.00x")
+
+    def _kb_toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+    def _kb_exit_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+
+    def _brief_status(self, text: str, duration_ms: int = 1500) -> None:
+        """Quick non-modal feedback in the status bar."""
+        self.statusBar().showMessage(text, duration_ms)
 
     def _open_settings(self) -> None:
         if self._client is None:

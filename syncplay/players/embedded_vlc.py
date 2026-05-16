@@ -307,6 +307,81 @@ class EmbeddedVlcPlayer(BasePlayer):
         except Exception:
             pass
 
+    # --- Helpers used by keyboard shortcuts (Phase 5) --------------------
+
+    def is_paused(self) -> bool:
+        return self._player.get_state() != self._vlc.State.Playing
+
+    def toggle_pause(self) -> None:
+        if self.is_paused():
+            self.setPaused(False)
+        else:
+            self.setPaused(True)
+
+    def position_seconds(self) -> float:
+        return max(0.0, (self._player.get_time() or 0) / 1000.0)
+
+    def seek_by_seconds(self, delta_s: float) -> None:
+        new_position = max(0.0, self.position_seconds() + delta_s)
+        self.setPosition(new_position)
+
+    def set_volume(self, volume: int) -> None:
+        volume = max(0, min(200, int(volume)))
+        self._player.audio_set_volume(volume)
+
+    def get_volume(self) -> int:
+        try:
+            return int(self._player.audio_get_volume())
+        except Exception:
+            return 100
+
+    def adjust_volume(self, delta: int) -> int:
+        new_vol = self.get_volume() + int(delta)
+        self.set_volume(new_vol)
+        return self.get_volume()
+
+    def toggle_mute(self) -> None:
+        self._player.audio_toggle_mute()
+
+    def is_muted(self) -> bool:
+        try:
+            return bool(self._player.audio_get_mute())
+        except Exception:
+            return False
+
+    def adjust_subtitle_delay_ms(self, delta_ms: int) -> int:
+        try:
+            current_us = self._player.video_get_spu_delay()
+        except Exception:
+            current_us = 0
+        new_us = int(current_us) + int(delta_ms) * 1000
+        self._player.video_set_spu_delay(new_us)
+        return new_us // 1000
+
+    def adjust_audio_delay_ms(self, delta_ms: int) -> int:
+        try:
+            current_us = self._player.audio_get_delay()
+        except Exception:
+            current_us = 0
+        new_us = int(current_us) + int(delta_ms) * 1000
+        self._player.audio_set_delay(new_us)
+        return new_us // 1000
+
+    def get_speed(self) -> float:
+        try:
+            return float(self._player.get_rate())
+        except Exception:
+            return 1.0
+
+    def adjust_speed(self, multiplier: float) -> float:
+        new_rate = max(0.25, min(4.0, self.get_speed() * float(multiplier)))
+        self._player.set_rate(new_rate)
+        return new_rate
+
+    def reset_speed(self) -> float:
+        self._player.set_rate(1.0)
+        return 1.0
+
     # --- API used by the Phase 4 settings panel --------------------------
 
     def get_audio_tracks(self) -> list:
