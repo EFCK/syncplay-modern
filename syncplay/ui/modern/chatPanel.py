@@ -69,6 +69,16 @@ class ChatPanel(QtWidgets.QWidget):
 
     # --- Public API --------------------------------------------------------
 
+    def has_pending_input(self) -> bool:
+        """True if the user has unsent text in the input field.
+
+        Used by the fullscreen overlay's autohide logic: a focused-but-
+        empty QLineEdit shouldn't keep the overlay alive forever (which
+        is what happens by default since pressing Enter clears the
+        text but leaves focus on the line edit).
+        """
+        return bool(self._input.text().strip())
+
     def scroll_state(self) -> tuple[int, bool]:
         """Snapshot the chat log's vertical scroll position.
 

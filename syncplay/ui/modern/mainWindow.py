@@ -1192,14 +1192,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def _fs_hide_overlay(self) -> None:
         if self._overlay is None:
             return
-        # Don't hide while user is actively typing in chat.
+        # Don't hide while the user is actively typing a message —
+        # but "actively typing" means there's unsent text in the
+        # input. Pressing Enter clears the input yet leaves focus on
+        # the QLineEdit; treating focus alone as "still typing" would
+        # keep the overlay pinned open forever after the first send.
         focus = QtWidgets.QApplication.focusWidget()
         if focus is not None and focus is not self.videoWidget:
             parent = focus
             while parent is not None:
                 if parent is self._overlay:
-                    self._autohide_timer.start()
-                    return
+                    if self._chat_panel.has_pending_input():
+                        self._autohide_timer.start()
+                        return
+                    break
                 parent = parent.parentWidget()
         self._overlay.hide()
 
