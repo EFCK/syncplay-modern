@@ -49,7 +49,7 @@ class Toast(QtWidgets.QFrame):
             "QFrame#toastStack { background: transparent; }"
             "QLabel.toastLine { "
             "  background: rgba(22, 22, 22, 220); color: #f4f4f4; "
-            "  padding: 10px 16px; border-radius: 8px; font-size: 17px; "
+            "  padding: 18px 26px; border-radius: 10px; font-size: 17px; "
             "}"
         )
         self._layout = QtWidgets.QVBoxLayout(self)
@@ -70,6 +70,7 @@ class Toast(QtWidgets.QFrame):
         label.setProperty("class", "toastLine")
         label.setTextFormat(QtCore.Qt.PlainText)
         label.setWordWrap(True)
+        label.setMinimumWidth(220)
         label.setMaximumWidth(460)
         label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
         # Stylesheet selector uses `class` property; re-polish so it picks up.
