@@ -78,14 +78,23 @@ class VideoControls(QtWidgets.QFrame):
             "border: none; padding: 4px 8px; font-size: 14px; }"
             "QToolButton:hover { background: #2a2a2a; border-radius: 3px; }"
             "QToolButton:pressed { background: #1a1a1a; border-radius: 3px; }"
-            "QLabel { color: #ccc; font-size: 11px; min-width: 44px; }"
+            # QLabel needs an explicit transparent background: on Windows
+            # it picks up the system widget color (light gray) otherwise,
+            # which renders as a white box around the time labels.
+            "QLabel { color: #ccc; font-size: 11px; min-width: 44px; "
+            "background: transparent; }"
+            # QSlider needs the same: without a widget-level transparent
+            # background, Windows renders a light frame around the entire
+            # slider widget that swallows the dark groove styling.
+            "QSlider { background: transparent; border: none; }"
             "QSlider::groove:horizontal { background: #444; height: 4px; "
-            "border-radius: 2px; }"
-            "QSlider::sub-page:horizontal { background: #2a8; border-radius: 2px; }"
+            "border-radius: 2px; border: none; }"
+            "QSlider::sub-page:horizontal { background: #2a8; "
+            "border-radius: 2px; border: none; }"
             "QSlider::add-page:horizontal { background: #2a2a2a; "
-            "border-radius: 2px; }"
+            "border-radius: 2px; border: none; }"
             "QSlider::handle:horizontal { background: #fff; width: 10px; "
-            "margin: -4px 0; border-radius: 5px; }"
+            "margin: -4px 0; border-radius: 5px; border: none; }"
         )
         self.setFixedHeight(34)
 
