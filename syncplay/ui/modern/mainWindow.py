@@ -690,13 +690,27 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
     def _install_shortcuts(self) -> None:
-        """VLC-style keyboard shortcuts, scoped to the video widget."""
-        scope = QtCore.Qt.WidgetWithChildrenShortcut
+        """VLC-style keyboard shortcuts.
 
-        def make(seq, handler):
-            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self.videoWidget)
+        Window-scoped (not widget-scoped) so the user doesn't have to
+        click the video first — on Windows the native HWND child can
+        swallow mouse-down events before Qt sees them, and the focus
+        never moves to the video widget, leaving widget-scoped
+        shortcuts dead. Each handler is wrapped in a focus-guard so
+        typing in chat input still works: while a text input has
+        focus, every shortcut except Escape is suppressed and the key
+        flows through to the input. Escape is always live so the user
+        can exit fullscreen from anywhere.
+        """
+        scope = QtCore.Qt.WindowShortcut
+
+        def make(seq, handler, *, always: bool = False):
+            def guarded():
+                if always or not self._shortcut_blocked():
+                    handler()
+            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self)
             sc.setContext(scope)
-            sc.activated.connect(handler)
+            sc.activated.connect(guarded)
             return sc
 
         # Playback
@@ -724,7 +738,24 @@ class MainWindow(QtWidgets.QMainWindow):
         make("=", self._kb_reset_speed)
         # Fullscreen
         make("F", self._kb_toggle_fullscreen)
-        make("Escape", self._kb_exit_fullscreen)
+        make("Escape", self._kb_exit_fullscreen, always=True)
+
+    def _shortcut_blocked(self) -> bool:
+        """True if a text input has focus — let the input handle the key."""
+        w = QtWidgets.QApplication.focusWidget()
+        if w is None:
+            return False
+        return isinstance(
+            w,
+            (
+                QtWidgets.QLineEdit,
+                QtWidgets.QTextEdit,
+                QtWidgets.QPlainTextEdit,
+                QtWidgets.QComboBox,
+                QtWidgets.QSpinBox,
+                QtWidgets.QDoubleSpinBox,
+            ),
+        )
 
     # --- Shortcut handlers ------------------------------------------------
 
@@ -1161,18 +1192,18 @@ class MainWindow(QtWidgets.QMainWindow):
         toast = getattr(self, "_toast", None)
         if toast is None:
             return
-        toast.show_message(text, duration=duration_ms)
+        # Reposition before showing so the top-level toast window appears
+        # at the correct screen location on the first frame (no flash).
         self._toast_reposition()
+        toast.show_message(text, duration=duration_ms)
 
     def _toast_reposition(self) -> None:
         toast = getattr(self, "_toast", None)
         if toast is None:
             return
         video_widget = self.videoWidget
-        # Translate the video widget's local rect into MainWindow coords —
-        # Toast is parented to MainWindow so it can float above the native
-        # X surface (a child of WA_NativeWindow gets painted over).
-        top_left = video_widget.mapTo(self, QtCore.QPoint(0, 0))
+        # Toast is a top-level window — pass screen coordinates.
+        top_left = video_widget.mapToGlobal(QtCore.QPoint(0, 0))
         rect = QtCore.QRect(top_left, video_widget.size())
         toast.reposition(rect)
 
@@ -1188,8 +1219,8 @@ class MainWindow(QtWidgets.QMainWindow):
         toast = getattr(self, "_toast", None)
         if toast is None:
             return
-        toast.show_message(f"{event.user}: {event.text}", duration=4000)
         self._toast_reposition()
+        toast.show_message(f"{event.user}: {event.text}", duration=4000)
 
     def _open_settings(self) -> None:
         if self._client is None:

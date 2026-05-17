@@ -5,10 +5,17 @@ delay, speed) and optionally chat lines when `chatOnVideoEnabled` is on,
 renders them stacked top-right of the video area, and auto-dismisses
 each after its duration.
 
-Parented to MainWindow (not VideoWidget) so it floats above libvlc's
-native X11 render surface — child widgets of a WA_NativeWindow get
-painted over on Linux. MainWindow positions us via reposition() from
-its resize / fullscreen-toggle paths.
+Implemented as a top-level frameless tool window rather than a child
+widget of MainWindow. The video widget is `WA_NativeWindow` — a child
+HWND — and on Windows sibling Qt widgets cannot reliably draw over a
+native child HWND (the OS treats the native child as always-on-top of
+non-native siblings, the parent's paint region gets clipped, and the
+video frame tears, going half-black where the toast geometry sits).
+
+A separate top-level HWND for the toast sidesteps the whole layering
+problem: the WM stacks it above the MainWindow (and therefore above
+the video HWND) cleanly. Positioned in screen coordinates by
+MainWindow's resize / fullscreen / chat-toggle paths.
 """
 
 from __future__ import annotations
@@ -25,10 +32,19 @@ class Toast(QtWidgets.QFrame):
     DEFAULT_DURATION_MS = 2000
 
     def __init__(self, parent: QtWidgets.QWidget) -> None:
-        super().__init__(parent)
+        super().__init__(
+            parent,
+            QtCore.Qt.Tool
+            | QtCore.Qt.FramelessWindowHint
+            | QtCore.Qt.WindowStaysOnTopHint
+            | QtCore.Qt.WindowTransparentForInput
+            | QtCore.Qt.WindowDoesNotAcceptFocus,
+        )
         self.setObjectName("toastStack")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
         self.setStyleSheet(
             "QFrame#toastStack { background: transparent; }"
             "QLabel.toastLine { "
