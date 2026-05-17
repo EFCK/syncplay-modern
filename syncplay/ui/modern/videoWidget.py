@@ -47,6 +47,8 @@ class VideoWidget(QtWidgets.QWidget):
         # so the area the video just grew into doesn't show stale chat
         # pixels until libvlc draws its next frame.
         self._black_once = False
+        # Optional sub-rect for _black_once. None = fill the whole widget.
+        self._black_once_rect: QtCore.QRect | None = None
 
     def paintEvent(self, event):
         if self._placeholder_text:
@@ -58,22 +60,31 @@ class VideoWidget(QtWidgets.QWidget):
             return
         if self._black_once:
             self._black_once = False
+            fill_rect = self._black_once_rect or self.rect()
+            self._black_once_rect = None
             painter = QtGui.QPainter(self)
-            painter.fillRect(self.rect(), QtGui.QColor(0, 0, 0))
+            painter.fillRect(fill_rect, QtGui.QColor(0, 0, 0))
             painter.end()
             return
         # libvlc owns the pixels — do not draw.
 
-    def request_black_repaint(self) -> None:
+    def request_black_repaint(self, rect: "QtCore.QRect | None" = None) -> None:
         """Force one black-fill paint on the next event tick.
 
-        libvlc draws into our native window asynchronously, so when the
-        widget grows (chat hidden) the new area shows whatever was there
-        before until libvlc catches up. This paints it black once so the
-        gap isn't filled with stale UI pixels.
+        libvlc draws into our native window asynchronously and only
+        refreshes the pixels where it's actually rendering frames — not
+        the letterbox bars at the top / bottom of the video. So when
+        another Qt widget (chat sidebar, video control bar) was floating
+        over those letterbox areas and then hides, its pixels can stay
+        on screen until something else paints over them.
+
+        Pass `rect` (in widget-local coords) to clear just that region;
+        omit it to clear the whole widget. The fill is black so it
+        blends seamlessly into libvlc's existing letterbox.
         """
         self._black_once = True
-        self.update()
+        self._black_once_rect = rect
+        self.update(rect) if rect is not None else self.update()
 
     def clear_placeholder(self) -> None:
         self._placeholder_text = ""

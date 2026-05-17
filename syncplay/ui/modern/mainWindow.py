@@ -922,8 +922,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._vc_position_bar():
             # Video pane too narrow to host the bar — make sure it's
             # not lingering on screen from a previous wider layout.
-            if self._video_controls.isVisible():
-                self._video_controls.hide()
+            self._vc_hide_bar()
             return
         if not self._video_controls.isVisible():
             # Sync to the player before the bar appears so the user
@@ -934,8 +933,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._video_controls.raise_()
 
     def _vc_hide_bar(self) -> None:
-        if self._video_controls.isVisible():
-            self._video_controls.hide()
+        if not self._video_controls.isVisible():
+            return
+        # Capture where the bar sat (in videoWidget-local coords) before
+        # hiding, so we can ask the video widget to repaint that region
+        # with black. On Windows libvlc doesn't redraw the letterbox at
+        # the bottom of the video, so the part of the bar that overlapped
+        # the letterbox stays on screen otherwise.
+        bar_top_left_global = self._video_controls.mapToGlobal(QtCore.QPoint(0, 0))
+        bar_local_in_video = self.videoWidget.mapFromGlobal(bar_top_left_global)
+        clear_rect = QtCore.QRect(bar_local_in_video, self._video_controls.size())
+        self._video_controls.hide()
+        self.videoWidget.request_black_repaint(clear_rect)
 
     def _client_has_media(self) -> bool:
         player = self._player_or_none()
@@ -946,8 +955,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _vc_tick(self) -> None:
         """Cursor-polling tick — show/hide the bar based on activity."""
         if not self._client_has_media():
-            if self._video_controls.isVisible():
-                self._video_controls.hide()
+            self._vc_hide_bar()
             return
 
         now = time.monotonic()
@@ -1224,7 +1232,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._vc_position_bar():
             # Video pane shrank below the minimum — hide instead of
             # leaving the bar at a stale (overflowing) geometry.
-            self._video_controls.hide()
+            self._vc_hide_bar()
 
     def _brief_status(self, text: str, duration_ms: int = 1500) -> None:
         toast = getattr(self, "_toast", None)
