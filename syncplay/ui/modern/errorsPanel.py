@@ -11,15 +11,30 @@ import time
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from syncplay.ui.modern import theme as theme_mod
 from syncplay.ui.modern.events import ErrorEvent, ErrorSeverity
 
 
-_SEVERITY_COLOR = {
+# Severity-coded colours used inline on each error line. Theme-aware so
+# the "INFO" / "WARNING" / "ERROR" / "CRITICAL" tags stay readable on a
+# dark background instead of fading into it.
+_SEVERITY_COLORS_LIGHT = {
     ErrorSeverity.INFO: "#5a5a5a",
     ErrorSeverity.WARNING: "#a37a00",
     ErrorSeverity.ERROR: "#a23",
     ErrorSeverity.CRITICAL: "#7a0000",
 }
+_SEVERITY_COLORS_DARK = {
+    ErrorSeverity.INFO: "#bbbbbb",
+    ErrorSeverity.WARNING: "#d4a64f",
+    ErrorSeverity.ERROR: "#e08090",
+    ErrorSeverity.CRITICAL: "#ff7070",
+}
+
+
+def _severity_color(theme: str, severity: ErrorSeverity) -> str:
+    table = _SEVERITY_COLORS_DARK if theme_mod.normalize(theme) == theme_mod.DARK else _SEVERITY_COLORS_LIGHT
+    return table.get(severity, table[ErrorSeverity.ERROR])
 
 
 class ErrorsPanel(QtWidgets.QWidget):
@@ -29,13 +44,11 @@ class ErrorsPanel(QtWidgets.QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
+        self._theme: str = theme_mod.DEFAULT
+
         self._log = QtWidgets.QTextBrowser(self)
         self._log.setOpenExternalLinks(False)
-        self._log.document().setDefaultStyleSheet(
-            "p { margin: 2px 0; font-family: monospace; font-size: 12px; }"
-            ".timestamp { color: #888; }"
-            ".category { color: #555; }"
-        )
+        self._log.document().setDefaultStyleSheet(self._build_doc_css(self._theme))
 
         clear_btn = QtWidgets.QPushButton("Clear", self)
         clear_btn.clicked.connect(self._on_clear)
@@ -50,8 +63,23 @@ class ErrorsPanel(QtWidgets.QWidget):
         button_row.addWidget(clear_btn)
         layout.addLayout(button_row, 0)
 
+    # --- Theme ------------------------------------------------------------
+
+    def apply_theme(self, theme: str) -> None:
+        self._theme = theme
+        self._log.document().setDefaultStyleSheet(self._build_doc_css(theme))
+
+    @staticmethod
+    def _build_doc_css(theme: str) -> str:
+        p = theme_mod.palette(theme)
+        return (
+            "p { margin: 2px 0; font-family: monospace; font-size: 12px; }"
+            f".timestamp {{ color: {p['timestamp']}; }}"
+            f".category {{ color: {p['errors-category']}; }}"
+        )
+
     def render_error(self, event: ErrorEvent) -> None:
-        color = _SEVERITY_COLOR.get(event.severity, "#a23")
+        color = _severity_color(self._theme, event.severity)
         ts = time.strftime("%H:%M:%S", time.localtime(event.timestamp or time.time()))
         text = html.escape(event.text)
         category = html.escape(event.category)

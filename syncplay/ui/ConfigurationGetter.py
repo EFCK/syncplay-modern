@@ -108,8 +108,9 @@ class ConfigurationGetter(object):
             # syncplay-modern additions
             "chatOnVideoEnabled": False,
             "layoutChatCollapsed": False,
-            "fullscreenAutohideMs": 250,
+            "fullscreenAutohideMs": 120,
             "subtitleDelayDefaultMs": 0,
+            "theme": "light",          # "light" | "dark"
         }
 
         self._defaultConfig = self._config.copy()
@@ -239,7 +240,8 @@ class ConfigurationGetter(object):
                 "notificationTimeout", "alertTimeout",
                 "chatTimeout", "chatOutputEnabled",
                 "chatOnVideoEnabled", "layoutChatCollapsed",
-                "fullscreenAutohideMs", "subtitleDelayDefaultMs"],
+                "fullscreenAutohideMs", "subtitleDelayDefaultMs",
+                "theme"],
             "general": [
                 "language", "checkForUpdatesAutomatically",
                 "lastCheckedForUpdates"]

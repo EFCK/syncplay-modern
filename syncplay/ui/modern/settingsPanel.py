@@ -1,10 +1,20 @@
-"""Settings dialog: Quick + collapsible Advanced sections.
+"""Settings + Playback dialogs.
 
-Changes apply live (audio track, subtitle track, subtitle delay) and
-persist to the INI through `ConfigurationGetter.setConfigOption`.
-Connection-related fields (server / port / nickname / room) are displayed
-read-only because changing them requires a reconnect; they're surfaced
-here for visibility and to remind the user where they are connected.
+Two dialogs are exposed here:
+
+- `SettingsDialog`: tabbed sections covering Connection, Sync,
+  Behavior, Privacy, and Notifications. Lives behind the menu-bar
+  **Settings** entry.
+- `PlaybackDialog`: small focused dialog with the live media options
+  (audio track, subtitle track, subtitle delay, chat-on-video). Lives
+  behind the menu-bar **Playback** entry, separated out so the most
+  frequently-touched controls are a single click away instead of
+  hidden inside the larger settings panel.
+
+Both dialogs persist through the same `_persist_setting` path
+MainWindow exposes — values land in the INI exactly the way upstream
+expects to read them, so behaviour stays consistent for users who
+already know upstream Syncplay.
 """
 
 from __future__ import annotations
@@ -12,6 +22,23 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
+
+from syncplay import constants
+
+
+# Upstream-defined enum values; surfaced verbatim so user choices land in
+# the INI exactly the way upstream expects to read them back.
+_PRIVACY_OPTIONS = [
+    ("Send actual value", constants.PRIVACY_SENDRAW_MODE),
+    ("Send hashed value", constants.PRIVACY_SENDHASHED_MODE),
+    ("Don't send at all", constants.PRIVACY_DONTSEND_MODE),
+]
+
+_UNPAUSE_OPTIONS = [
+    ("Always unpause", constants.UNPAUSE_ALWAYS_MODE),
+    ("Only if all others are ready", constants.UNPAUSE_IFOTHERSREADY_MODE),
+    ("Only if at least N users are ready", constants.UNPAUSE_IFMINUSERSREADY_MODE),
+]
 
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -26,124 +53,233 @@ class SettingsDialog(QtWidgets.QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(520)
+        self.setMinimumHeight(520)
 
         self._config = config
         self._get_player = get_player
         self._on_persist = on_persist
 
-        layout = QtWidgets.QVBoxLayout(self)
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
 
-        # === Quick section =================================================
-        quick_box = QtWidgets.QGroupBox("Quick", self)
-        quick_form = QtWidgets.QFormLayout(quick_box)
-        quick_form.setLabelAlignment(QtCore.Qt.AlignRight)
+        self._tabs = QtWidgets.QTabWidget(self)
+        self._tabs.addTab(self._build_connection_tab(), "Connection")
+        self._tabs.addTab(self._build_sync_tab(), "Sync")
+        self._tabs.addTab(self._build_behavior_tab(), "Behavior")
+        self._tabs.addTab(self._build_privacy_tab(), "Privacy")
+        self._tabs.addTab(self._build_notifications_tab(), "Notifications")
+        outer.addWidget(self._tabs, 1)
 
-        self._audio_combo = QtWidgets.QComboBox()
-        self._audio_combo.setEnabled(False)
-        self._audio_combo.currentIndexChanged.connect(self._on_audio_changed)
-        quick_form.addRow("Audio track", self._audio_combo)
+        button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        button_box.rejected.connect(self.accept)
+        button_box.accepted.connect(self.accept)
+        outer.addWidget(button_box)
 
-        self._sub_combo = QtWidgets.QComboBox()
-        self._sub_combo.setEnabled(False)
-        self._sub_combo.currentIndexChanged.connect(self._on_subtitle_changed)
-        quick_form.addRow("Subtitle track", self._sub_combo)
+    # ==================================================================
+    # Public hooks called by MainWindow
+    # ==================================================================
 
-        sub_delay_row = QtWidgets.QHBoxLayout()
-        self._sub_delay_spin = QtWidgets.QSpinBox()
-        self._sub_delay_spin.setRange(-10000, 10000)
-        self._sub_delay_spin.setSingleStep(50)
-        self._sub_delay_spin.setSuffix(" ms")
-        self._sub_delay_spin.setValue(int(self._config.get("subtitleDelayDefaultMs") or 0))
-        self._sub_delay_spin.valueChanged.connect(self._on_sub_delay_changed)
-        sub_delay_reset = QtWidgets.QPushButton("Reset")
-        sub_delay_reset.clicked.connect(lambda: self._sub_delay_spin.setValue(0))
-        sub_delay_row.addWidget(self._sub_delay_spin, 1)
-        sub_delay_row.addWidget(sub_delay_reset, 0)
-        quick_form.addRow("Subtitle delay", self._wrap_layout(sub_delay_row))
+    def set_fileinfo(self, fileinfo: dict) -> None:
+        # Playback options now live in PlaybackDialog. SettingsDialog
+        # used to populate audio/subtitle track dropdowns from fileinfo;
+        # those have moved. This stub is kept so MainWindow can call it
+        # uniformly on every dialog without checking the class first.
+        return
 
-        self._chat_on_video = QtWidgets.QCheckBox("Show chat on video")
-        self._chat_on_video.setChecked(bool(self._config.get("chatOnVideoEnabled")))
-        self._chat_on_video.toggled.connect(self._on_chat_on_video)
-        quick_form.addRow("", self._chat_on_video)
+    # ==================================================================
+    # Tab builders
+    # ==================================================================
 
-        # Connection summary (read-only, requires reconnect)
+    def _build_connection_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
+        form = QtWidgets.QFormLayout(widget)
+        form.setLabelAlignment(QtCore.Qt.AlignRight)
+
         host_port = f"{self._config.get('host', '')}:{self._config.get('port', '')}"
-        quick_form.addRow("Server", self._readonly_label(host_port))
-        quick_form.addRow("Nickname", self._readonly_label(self._config.get("name", "")))
-        quick_form.addRow("Room", self._readonly_label(self._config.get("room", "")))
+        form.addRow("Server", self._readonly_label(host_port))
+        form.addRow("Nickname", self._readonly_label(self._config.get("name", "")))
+        form.addRow("Default room", self._readonly_label(self._config.get("room", "")))
+
         note = QtWidgets.QLabel(
-            "Changing server / nickname / room requires reconnecting."
+            "These four values are set on the connect screen. Changing them "
+            "requires reconnecting — relaunch the app to pick up a new value."
         )
+        note.setWordWrap(True)
         note.setStyleSheet("color: #888; font-size: 11px;")
-        quick_form.addRow("", note)
+        form.addRow("", note)
 
-        layout.addWidget(quick_box)
+        return widget
 
-        # === Advanced section (collapsible) ================================
-        self._advanced_button = QtWidgets.QToolButton(self)
-        self._advanced_button.setText("▶ Advanced")
-        self._advanced_button.setCheckable(True)
-        self._advanced_button.setStyleSheet(
-            "QToolButton { border: none; font-weight: bold; padding: 4px; }"
+    def _build_sync_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
+        form = QtWidgets.QFormLayout(widget)
+        form.setLabelAlignment(QtCore.Qt.AlignRight)
+
+        intro = QtWidgets.QLabel(
+            "When peers drift apart in playback position, Syncplay nudges "
+            "your speed/position to bring you back in line. Tune that here."
         )
-        self._advanced_button.toggled.connect(self._toggle_advanced)
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #666; font-size: 11px;")
+        form.addRow(intro)
 
-        self._advanced_box = QtWidgets.QGroupBox()
-        self._advanced_box.setVisible(False)
-        adv_form = QtWidgets.QFormLayout(self._advanced_box)
-
-        self._ready_at_start = QtWidgets.QCheckBox("Mark me ready at startup")
-        self._ready_at_start.setChecked(bool(self._config.get("readyAtStart")))
-        self._ready_at_start.toggled.connect(
-            lambda v: self._persist("readyAtStart", v)
+        self._slow_on_desync = self._make_bool(
+            "slowOnDesync", default=True, label="Slow down when ahead of others"
         )
-        adv_form.addRow("Readiness", self._ready_at_start)
+        form.addRow("Slow down", self._slow_on_desync)
 
-        self._pause_on_leave = QtWidgets.QCheckBox("Pause when someone leaves")
-        self._pause_on_leave.setChecked(bool(self._config.get("pauseOnLeave")))
-        self._pause_on_leave.toggled.connect(
-            lambda v: self._persist("pauseOnLeave", v)
+        self._rewind_on_desync = self._make_bool(
+            "rewindOnDesync", default=True, label="Rewind if I'm too far ahead"
         )
-        adv_form.addRow("", self._pause_on_leave)
+        form.addRow("Rewind", self._rewind_on_desync)
 
-        self._slow_on_desync = QtWidgets.QCheckBox("Slow down when ahead of others")
-        self._slow_on_desync.setChecked(bool(self._config.get("slowOnDesync", True)))
-        self._slow_on_desync.toggled.connect(
-            lambda v: self._persist("slowOnDesync", v)
+        self._fastfwd_on_desync = self._make_bool(
+            "fastforwardOnDesync", default=True, label="Fast-forward if I'm too far behind"
         )
-        adv_form.addRow("Drift correction", self._slow_on_desync)
+        form.addRow("Fast-forward", self._fastfwd_on_desync)
 
-        self._rewind_on_desync = QtWidgets.QCheckBox("Rewind if I get ahead")
-        self._rewind_on_desync.setChecked(bool(self._config.get("rewindOnDesync", True)))
-        self._rewind_on_desync.toggled.connect(
-            lambda v: self._persist("rewindOnDesync", v)
+        self._dont_slow_down_with_me = self._make_bool(
+            "dontSlowDownWithMe", default=False,
+            label="Don't slow down on my account (others ignore me when computing position)"
         )
-        adv_form.addRow("", self._rewind_on_desync)
+        form.addRow("Drift weighting", self._dont_slow_down_with_me)
 
-        self._fastfwd_on_desync = QtWidgets.QCheckBox("Fast-forward if I get behind")
-        self._fastfwd_on_desync.setChecked(bool(self._config.get("fastforwardOnDesync", True)))
-        self._fastfwd_on_desync.toggled.connect(
-            lambda v: self._persist("fastforwardOnDesync", v)
+        self._slowdown_thresh = self._make_float(
+            "slowdownThreshold",
+            default=float(constants.DEFAULT_SLOWDOWN_KICKIN_THRESHOLD)
+            if hasattr(constants, "DEFAULT_SLOWDOWN_KICKIN_THRESHOLD") else 1.5,
+            minimum=0.1, maximum=10.0, step=0.1, suffix=" s",
         )
-        adv_form.addRow("", self._fastfwd_on_desync)
+        form.addRow("Slowdown kick-in", self._slowdown_thresh)
 
-        self._autohide_spin = QtWidgets.QSpinBox()
-        self._autohide_spin.setRange(500, 30000)
-        self._autohide_spin.setSingleStep(500)
-        self._autohide_spin.setSuffix(" ms")
-        self._autohide_spin.setValue(int(self._config.get("fullscreenAutohideMs") or 3000))
-        self._autohide_spin.valueChanged.connect(
-            lambda v: self._persist("fullscreenAutohideMs", v)
+        self._rewind_thresh = self._make_float(
+            "rewindThreshold",
+            default=float(constants.DEFAULT_REWIND_THRESHOLD)
+            if hasattr(constants, "DEFAULT_REWIND_THRESHOLD") else 4.0,
+            minimum=1.0, maximum=120.0, step=0.5, suffix=" s",
         )
-        adv_form.addRow("Fullscreen chat auto-hide", self._autohide_spin)
+        form.addRow("Rewind threshold", self._rewind_thresh)
 
-        self._show_osd_warnings = QtWidgets.QCheckBox("Allow corner toast for warnings")
-        self._show_osd_warnings.setChecked(bool(self._config.get("showOSDWarnings", False)))
-        self._show_osd_warnings.toggled.connect(
-            lambda v: self._persist("showOSDWarnings", v)
+        self._ff_thresh = self._make_float(
+            "fastforwardThreshold",
+            default=float(constants.DEFAULT_FASTFORWARD_THRESHOLD)
+            if hasattr(constants, "DEFAULT_FASTFORWARD_THRESHOLD") else 5.0,
+            minimum=1.0, maximum=120.0, step=0.5, suffix=" s",
         )
-        adv_form.addRow("Notifications", self._show_osd_warnings)
+        form.addRow("Fast-forward threshold", self._ff_thresh)
+
+        return widget
+
+    def _build_behavior_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
+        form = QtWidgets.QFormLayout(widget)
+        form.setLabelAlignment(QtCore.Qt.AlignRight)
+
+        self._ready_at_start = self._make_bool(
+            "readyAtStart", default=False, label="Mark me ready at startup"
+        )
+        form.addRow("Readiness", self._ready_at_start)
+
+        self._pause_on_leave = self._make_bool(
+            "pauseOnLeave", default=False, label="Pause when someone leaves the room"
+        )
+        form.addRow("On leave", self._pause_on_leave)
+
+        # Unpause action — combo of three upstream modes.
+        self._unpause_combo = QtWidgets.QComboBox()
+        for label, value in _UNPAUSE_OPTIONS:
+            self._unpause_combo.addItem(label, userData=value)
+        self._select_combo_data(
+            self._unpause_combo,
+            self._config.get("unpauseAction") or constants.UNPAUSE_IFOTHERSREADY_MODE,
+        )
+        self._unpause_combo.currentIndexChanged.connect(
+            lambda i: self._persist("unpauseAction", self._unpause_combo.itemData(i))
+        )
+        form.addRow("When I press play", self._unpause_combo)
+
+        self._autoplay_min_users = QtWidgets.QSpinBox()
+        self._autoplay_min_users.setRange(1, 99)
+        try:
+            self._autoplay_min_users.setValue(int(self._config.get("autoplayMinUsers") or 3))
+        except (TypeError, ValueError):
+            self._autoplay_min_users.setValue(3)
+        self._autoplay_min_users.valueChanged.connect(
+            lambda v: self._persist("autoplayMinUsers", int(v))
+        )
+        form.addRow("Min users for autoplay", self._autoplay_min_users)
+
+        self._autoplay_same_files = self._make_bool(
+            "autoplayRequireSameFilenames", default=True,
+            label="Require everyone to have the same filename to autoplay",
+        )
+        form.addRow("Autoplay safety", self._autoplay_same_files)
+
+        self._shared_playlist = self._make_bool(
+            "sharedPlaylistEnabled", default=False,
+            label="Enable shared playlist (room-wide queue)",
+        )
+        form.addRow("Playlist", self._shared_playlist)
+
+        self._loop_playlist = self._make_bool(
+            "loopAtEndOfPlaylist", default=False,
+            label="Loop the playlist when the last item ends",
+        )
+        form.addRow("", self._loop_playlist)
+
+        self._loop_single = self._make_bool(
+            "loopSingleFiles", default=False,
+            label="Loop the current file when it ends",
+        )
+        form.addRow("", self._loop_single)
+
+        return widget
+
+    def _build_privacy_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
+        form = QtWidgets.QFormLayout(widget)
+        form.setLabelAlignment(QtCore.Qt.AlignRight)
+
+        intro = QtWidgets.QLabel(
+            "Syncplay normally tells the room what file (name, size, duration) "
+            "you have loaded so it can verify everyone watches the same thing. "
+            "If you'd rather not share the raw values, switch to hashed (the "
+            "room can only see whether files match) or disabled (no info at all)."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #666; font-size: 11px;")
+        form.addRow(intro)
+
+        self._filename_priv = QtWidgets.QComboBox()
+        for label, value in _PRIVACY_OPTIONS:
+            self._filename_priv.addItem(label, userData=value)
+        self._select_combo_data(
+            self._filename_priv,
+            self._config.get("filenamePrivacyMode") or constants.PRIVACY_SENDRAW_MODE,
+        )
+        self._filename_priv.currentIndexChanged.connect(
+            lambda i: self._persist("filenamePrivacyMode", self._filename_priv.itemData(i))
+        )
+        form.addRow("Filename privacy", self._filename_priv)
+
+        self._filesize_priv = QtWidgets.QComboBox()
+        for label, value in _PRIVACY_OPTIONS:
+            self._filesize_priv.addItem(label, userData=value)
+        self._select_combo_data(
+            self._filesize_priv,
+            self._config.get("filesizePrivacyMode") or constants.PRIVACY_SENDRAW_MODE,
+        )
+        self._filesize_priv.currentIndexChanged.connect(
+            lambda i: self._persist("filesizePrivacyMode", self._filesize_priv.itemData(i))
+        )
+        form.addRow("File size privacy", self._filesize_priv)
+
+        self._only_trusted = self._make_bool(
+            "onlySwitchToTrustedDomains", default=True,
+            label="Only auto-switch to URLs on the trusted domains list below",
+        )
+        form.addRow("Trusted domains", self._only_trusted)
 
         self._trusted_domains = QtWidgets.QPlainTextEdit()
         self._trusted_domains.setPlaceholderText("one domain per line")
@@ -152,43 +288,125 @@ class SettingsDialog(QtWidgets.QDialog):
             self._trusted_domains.setPlainText("\n".join(td))
         elif isinstance(td, str):
             self._trusted_domains.setPlainText(td)
-        self._trusted_domains.setFixedHeight(60)
+        self._trusted_domains.setFixedHeight(90)
         self._trusted_domains.textChanged.connect(self._on_trusted_domains_changed)
-        adv_form.addRow("Trusted domains", self._trusted_domains)
+        form.addRow("", self._trusted_domains)
 
-        layout.addWidget(self._advanced_button)
-        layout.addWidget(self._advanced_box)
+        return widget
 
-        # === Buttons =======================================================
-        button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
-        button_box.rejected.connect(self.accept)
-        button_box.accepted.connect(self.accept)
-        layout.addWidget(button_box)
+    def _build_notifications_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
+        form = QtWidgets.QFormLayout(widget)
+        form.setLabelAlignment(QtCore.Qt.AlignRight)
 
-        # Populate dropdowns if we already have file info from a parsed media.
-        if fileinfo is not None:
-            self.set_fileinfo(fileinfo)
+        intro = QtWidgets.QLabel(
+            "Toasts and on-screen-display warnings. The default fork "
+            "behaviour is quiet — flip these on if you want more nagging."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #666; font-size: 11px;")
+        form.addRow(intro)
 
-    # --- Public API used by MainWindow ------------------------------------
+        self._show_osd = self._make_bool(
+            "showOSD", default=False, label="Show on-screen overlay messages at all"
+        )
+        form.addRow("OSD master", self._show_osd)
 
-    def set_fileinfo(self, fileinfo: dict) -> None:
-        audio_tracks = fileinfo.get("audio_tracks") or []
-        sub_tracks = fileinfo.get("subtitle_tracks") or []
-        self._populate_combo(self._audio_combo, audio_tracks)
-        self._populate_combo(self._sub_combo, sub_tracks)
-        self._audio_combo.setEnabled(bool(audio_tracks))
-        self._sub_combo.setEnabled(bool(sub_tracks))
+        self._show_osd_warnings = self._make_bool(
+            "showOSDWarnings", default=False, label="Show warning toasts"
+        )
+        form.addRow("Warnings", self._show_osd_warnings)
 
-    # --- Internals --------------------------------------------------------
+        self._show_slowdown_osd = self._make_bool(
+            "showSlowdownOSD", default=False, label="Show slowdown / speedup events"
+        )
+        form.addRow("Sync events", self._show_slowdown_osd)
+
+        self._show_same_room_osd = self._make_bool(
+            "showSameRoomOSD", default=True, label="Show events from users in my room"
+        )
+        form.addRow("Same-room events", self._show_same_room_osd)
+
+        self._show_diff_room_osd = self._make_bool(
+            "showDifferentRoomOSD", default=False, label="Show events from other rooms"
+        )
+        form.addRow("Cross-room events", self._show_diff_room_osd)
+
+        self._show_non_controller_osd = self._make_bool(
+            "showNonControllerOSD", default=False, label="Show events triggered by non-controllers"
+        )
+        form.addRow("Non-controller events", self._show_non_controller_osd)
+
+        self._show_duration_notif = self._make_bool(
+            "showDurationNotification", default=True,
+            label="Notify me when file durations don't match across the room",
+        )
+        form.addRow("Duration mismatch", self._show_duration_notif)
+
+        self._autohide_spin = QtWidgets.QSpinBox()
+        self._autohide_spin.setRange(40, 30000)
+        self._autohide_spin.setSingleStep(20)
+        self._autohide_spin.setSuffix(" ms")
+        self._autohide_spin.setValue(int(self._config.get("fullscreenAutohideMs") or 120))
+        self._autohide_spin.valueChanged.connect(
+            lambda v: self._persist("fullscreenAutohideMs", int(v))
+        )
+        form.addRow("Fullscreen chat auto-hide", self._autohide_spin)
+
+        return widget
+
+    # ==================================================================
+    # Reusable widget factories
+    # ==================================================================
+
+    def _make_bool(self, key: str, default: bool, label: str) -> QtWidgets.QCheckBox:
+        cb = QtWidgets.QCheckBox(label)
+        current = self._config.get(key)
+        if current is None:
+            current = default
+        cb.setChecked(bool(current))
+        cb.toggled.connect(lambda v, k=key: self._persist(k, bool(v)))
+        return cb
+
+    def _make_float(
+        self,
+        key: str,
+        default: float,
+        minimum: float,
+        maximum: float,
+        step: float,
+        suffix: str = "",
+    ) -> QtWidgets.QDoubleSpinBox:
+        spin = QtWidgets.QDoubleSpinBox()
+        spin.setRange(minimum, maximum)
+        spin.setSingleStep(step)
+        spin.setDecimals(2)
+        if suffix:
+            spin.setSuffix(suffix)
+        try:
+            spin.setValue(float(self._config.get(key) or default))
+        except (TypeError, ValueError):
+            spin.setValue(default)
+        spin.valueChanged.connect(lambda v, k=key: self._persist(k, float(v)))
+        return spin
+
+    # ==================================================================
+    # Helpers
+    # ==================================================================
 
     @staticmethod
     def _populate_combo(combo: QtWidgets.QComboBox, items: list) -> None:
-        # Avoid firing currentIndexChanged while we rebuild the model.
         combo.blockSignals(True)
         combo.clear()
         for entry in items:
             combo.addItem(entry.get("label", str(entry)), userData=entry.get("id"))
         combo.blockSignals(False)
+
+    @staticmethod
+    def _select_combo_data(combo: QtWidgets.QComboBox, value: Any) -> None:
+        idx = combo.findData(value)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
 
     @staticmethod
     def _wrap_layout(layout: QtWidgets.QLayout) -> QtWidgets.QWidget:
@@ -204,10 +422,118 @@ class SettingsDialog(QtWidgets.QDialog):
         label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         return label
 
-    def _toggle_advanced(self, on: bool) -> None:
-        self._advanced_button.setText("▼ Advanced" if on else "▶ Advanced")
-        self._advanced_box.setVisible(on)
-        self.adjustSize()
+    def _persist(self, key: str, value: Any) -> None:
+        self._config[key] = value
+        try:
+            self._on_persist(key, value)
+        except Exception:
+            pass
+
+    # ==================================================================
+    # Per-control handlers
+    # ==================================================================
+
+    def _on_trusted_domains_changed(self) -> None:
+        raw = self._trusted_domains.toPlainText()
+        domains = [line.strip() for line in raw.splitlines() if line.strip()]
+        self._persist("trustedDomains", domains)
+
+
+# ======================================================================
+# Playback dialog
+# ======================================================================
+
+
+class PlaybackDialog(QtWidgets.QDialog):
+    """Small focused dialog for live media options.
+
+    Sits behind the menu-bar **Playback** entry. Holds the controls
+    users touch most while watching: audio track, subtitle track,
+    subtitle delay, and the chat-on-video overlay toggle. Splitting
+    these out of the main Settings dialog means they're one click away
+    and don't get buried under five other tabs of less-frequent
+    preferences.
+    """
+
+    def __init__(
+        self,
+        parent: Optional[QtWidgets.QWidget],
+        config: dict,
+        fileinfo: Optional[dict],
+        get_player: Callable[[], Any],
+        on_persist: Callable[[str, Any], None],
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Playback")
+        self.setMinimumWidth(420)
+
+        self._config = config
+        self._get_player = get_player
+        self._on_persist = on_persist
+
+        form = QtWidgets.QFormLayout(self)
+        form.setLabelAlignment(QtCore.Qt.AlignRight)
+
+        self._audio_combo = QtWidgets.QComboBox()
+        self._audio_combo.setEnabled(False)
+        self._audio_combo.currentIndexChanged.connect(self._on_audio_changed)
+        form.addRow("Audio track", self._audio_combo)
+
+        self._sub_combo = QtWidgets.QComboBox()
+        self._sub_combo.setEnabled(False)
+        self._sub_combo.currentIndexChanged.connect(self._on_subtitle_changed)
+        form.addRow("Subtitle track", self._sub_combo)
+
+        sub_delay_row = QtWidgets.QHBoxLayout()
+        self._sub_delay_spin = QtWidgets.QSpinBox()
+        self._sub_delay_spin.setRange(-10000, 10000)
+        self._sub_delay_spin.setSingleStep(50)
+        self._sub_delay_spin.setSuffix(" ms")
+        self._sub_delay_spin.setValue(int(self._config.get("subtitleDelayDefaultMs") or 0))
+        self._sub_delay_spin.valueChanged.connect(self._on_sub_delay_changed)
+        sub_delay_reset = QtWidgets.QPushButton("Reset")
+        sub_delay_reset.clicked.connect(lambda: self._sub_delay_spin.setValue(0))
+        sub_delay_row.addWidget(self._sub_delay_spin, 1)
+        sub_delay_row.addWidget(sub_delay_reset, 0)
+        sub_delay_wrapper = QtWidgets.QWidget()
+        sub_delay_wrapper.setLayout(sub_delay_row)
+        sub_delay_row.setContentsMargins(0, 0, 0, 0)
+        form.addRow("Subtitle delay", sub_delay_wrapper)
+
+        self._chat_on_video = QtWidgets.QCheckBox("Show chat on video")
+        self._chat_on_video.setChecked(bool(self._config.get("chatOnVideoEnabled")))
+        self._chat_on_video.toggled.connect(self._on_chat_on_video)
+        form.addRow("Chat overlay", self._chat_on_video)
+
+        button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        button_box.rejected.connect(self.accept)
+        button_box.accepted.connect(self.accept)
+        form.addRow(button_box)
+
+        if fileinfo is not None:
+            self.set_fileinfo(fileinfo)
+
+    # ------------------------------------------------------------------
+    # Public hook called by MainWindow when libvlc finishes parsing media
+    # ------------------------------------------------------------------
+
+    def set_fileinfo(self, fileinfo: dict) -> None:
+        audio_tracks = fileinfo.get("audio_tracks") or []
+        sub_tracks = fileinfo.get("subtitle_tracks") or []
+        self._populate_combo(self._audio_combo, audio_tracks)
+        self._populate_combo(self._sub_combo, sub_tracks)
+        self._audio_combo.setEnabled(bool(audio_tracks))
+        self._sub_combo.setEnabled(bool(sub_tracks))
+
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _populate_combo(combo: QtWidgets.QComboBox, items: list) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        for entry in items:
+            combo.addItem(entry.get("label", str(entry)), userData=entry.get("id"))
+        combo.blockSignals(False)
 
     def _persist(self, key: str, value: Any) -> None:
         self._config[key] = value
@@ -245,8 +571,3 @@ class SettingsDialog(QtWidgets.QDialog):
 
     def _on_chat_on_video(self, on: bool) -> None:
         self._persist("chatOnVideoEnabled", bool(on))
-
-    def _on_trusted_domains_changed(self) -> None:
-        raw = self._trusted_domains.toPlainText()
-        domains = [line.strip() for line in raw.splitlines() if line.strip()]
-        self._persist("trustedDomains", domains)

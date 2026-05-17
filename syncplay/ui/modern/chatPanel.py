@@ -13,6 +13,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from syncplay.ui.modern import theme as theme_mod
 from syncplay.ui.modern.events import (
     ChatMessage,
     ErrorEvent,
@@ -27,16 +28,16 @@ class ChatPanel(QtWidgets.QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
+        # Track current theme; rebuilt on apply_theme. The document-level
+        # stylesheet is *insertion-time* in Qt — it only affects HTML
+        # appended after it's set — so historical messages keep their
+        # original colours after a toggle. New messages immediately pick
+        # up the new theme.
+        self._theme: str = theme_mod.DEFAULT
+
         self._log = QtWidgets.QTextBrowser(self)
         self._log.setOpenExternalLinks(True)
-        self._log.document().setDefaultStyleSheet(
-            "p { margin: 4px 0; }"
-            ".bubble-self { color: #1d6fa5; }"
-            ".bubble-other { color: #222; }"
-            ".sysline { color: #888; font-style: italic; }"
-            ".errline { color: #a35; font-style: italic; }"
-            ".timestamp { color: #aaa; font-size: 10px; }"
-        )
+        self._log.document().setDefaultStyleSheet(self._build_doc_css(self._theme))
 
         self._input = QtWidgets.QLineEdit(self)
         self._input.setPlaceholderText("Send a message…")
@@ -47,6 +48,24 @@ class ChatPanel(QtWidgets.QWidget):
         layout.setSpacing(4)
         layout.addWidget(self._log, 1)
         layout.addWidget(self._input, 0)
+
+    # --- Theme ------------------------------------------------------------
+
+    def apply_theme(self, theme: str) -> None:
+        self._theme = theme
+        self._log.document().setDefaultStyleSheet(self._build_doc_css(theme))
+
+    @staticmethod
+    def _build_doc_css(theme: str) -> str:
+        p = theme_mod.palette(theme)
+        return (
+            "p { margin: 4px 0; }"
+            f".bubble-self {{ color: {p['bubble-self']}; }}"
+            f".bubble-other {{ color: {p['bubble-other']}; }}"
+            f".sysline {{ color: {p['sysline']}; font-style: italic; }}"
+            f".errline {{ color: {p['errline']}; font-style: italic; }}"
+            f".timestamp {{ color: {p['timestamp']}; font-size: 10px; }}"
+        )
 
     # --- Public API --------------------------------------------------------
 

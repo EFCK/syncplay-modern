@@ -23,6 +23,7 @@ from typing import Iterable
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from syncplay.ui.modern import theme as theme_mod
 from syncplay.ui.modern.events import RoomSnapshot
 
 
@@ -33,9 +34,10 @@ class RoomPanel(QtWidgets.QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
-        self._room_label = QtWidgets.QLabel("(no room)")
-        self._room_label.setStyleSheet("color:#666; font-size: 11px; padding: 4px 6px 0 6px;")
+        self._theme: str = theme_mod.DEFAULT
+        self._room_label_text = "(no room)"
 
+        self._room_label = QtWidgets.QLabel(self._room_label_text)
         self._user_table = QtWidgets.QTableWidget(0, 3)
         self._user_table.setHorizontalHeaderLabels(["", "User", "File"])
         self._user_table.verticalHeader().setVisible(False)
@@ -48,20 +50,14 @@ class RoomPanel(QtWidgets.QWidget):
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
 
-        log_header = QtWidgets.QLabel("Activity")
-        log_header.setStyleSheet("color:#666; font-size: 11px; padding: 6px 6px 0 6px;")
+        self._log_header = QtWidgets.QLabel("Activity")
 
         self._log = QtWidgets.QTextBrowser(self)
         self._log.setOpenExternalLinks(False)
-        self._log.document().setDefaultStyleSheet(
-            "p { margin: 2px 0; }"
-            ".joined { color: #2a8; }"
-            ".left { color: #888; }"
-            ".ready { color: #2a8; font-weight: bold; }"
-            ".notready { color: #a35; }"
-            ".file { color: #1d6fa5; }"
-            ".timestamp { color: #aaa; font-size: 10px; }"
-        )
+
+        # Initial paint of all theme-driven styles.
+        self._apply_label_styles(self._theme)
+        self._log.document().setDefaultStyleSheet(self._build_log_css(self._theme))
 
         self._ready_btn = QtWidgets.QPushButton("I'm ready")
         self._ready_btn.setMinimumHeight(36)
@@ -72,17 +68,74 @@ class RoomPanel(QtWidgets.QWidget):
         layout.setSpacing(2)
         layout.addWidget(self._room_label, 0)
         layout.addWidget(self._user_table, 2)
-        layout.addWidget(log_header, 0)
+        layout.addWidget(self._log_header, 0)
         layout.addWidget(self._log, 3)
         button_row = QtWidgets.QHBoxLayout()
         button_row.setContentsMargins(6, 4, 6, 0)
         button_row.addWidget(self._ready_btn, 1)
         layout.addLayout(button_row, 0)
 
+    # --- Theme ------------------------------------------------------------
+
+    def apply_theme(self, theme: str) -> None:
+        self._theme = theme
+        self._apply_label_styles(theme)
+        self._log.document().setDefaultStyleSheet(self._build_log_css(theme))
+        # Re-skin the ready button by re-running set_snapshot's button
+        # branch — easier than tracking the last snapshot state.
+        self._refresh_ready_button_style()
+        # Re-colour the "—" placeholder cell in any existing rows.
+        self._refresh_empty_filename_cells()
+
+    def _apply_label_styles(self, theme: str) -> None:
+        p = theme_mod.palette(theme)
+        self._room_label.setStyleSheet(
+            f"color: {p['muted-label']}; font-size: 11px; padding: 4px 6px 0 6px;"
+        )
+        self._log_header.setStyleSheet(
+            f"color: {p['muted-label']}; font-size: 11px; padding: 6px 6px 0 6px;"
+        )
+
+    @staticmethod
+    def _build_log_css(theme: str) -> str:
+        p = theme_mod.palette(theme)
+        return (
+            "p { margin: 2px 0; }"
+            f".joined {{ color: {p['joined']}; }}"
+            f".left {{ color: {p['left']}; }}"
+            f".ready {{ color: {p['ready']}; font-weight: bold; }}"
+            f".notready {{ color: {p['notready']}; }}"
+            f".file {{ color: {p['file']}; }}"
+            f".timestamp {{ color: {p['timestamp']}; font-size: 10px; }}"
+        )
+
+    def _refresh_ready_button_style(self) -> None:
+        # Mirror the same colour choice set_snapshot uses, picked from
+        # the current theme's palette so both states stay readable.
+        p = theme_mod.palette(self._theme)
+        if self._ready_btn.text() == "I'm not ready":
+            bg = p["ready"]   # currently ready → green-ish
+        else:
+            bg = "#555555" if theme_mod.normalize(self._theme) == theme_mod.DARK else "#444444"
+        self._ready_btn.setStyleSheet(
+            f"QPushButton {{ background:{bg}; color:white; font-weight:bold; }}"
+        )
+
+    def _refresh_empty_filename_cells(self) -> None:
+        p = theme_mod.palette(self._theme)
+        empty_color = QtGui.QBrush(QtGui.QColor(p["filename-empty"]))
+        for row in range(self._user_table.rowCount()):
+            item = self._user_table.item(row, 2)
+            if item is not None and item.text() == "—":
+                item.setForeground(empty_color)
+
     # --- Public API --------------------------------------------------------
 
     def set_snapshot(self, snap: RoomSnapshot) -> None:
         self._room_label.setText(f"Room: {snap.room}" if snap.room else "(no room)")
+
+        p = theme_mod.palette(self._theme)
+        empty_color = QtGui.QBrush(QtGui.QColor(p["filename-empty"]))
 
         # Rebuild the user table from scratch — small enough that
         # incremental updates aren't worth the complexity.
@@ -107,7 +160,7 @@ class RoomPanel(QtWidgets.QWidget):
 
             file_item = QtWidgets.QTableWidgetItem(filename if filename else "—")
             if not filename:
-                file_item.setForeground(QtGui.QBrush(QtGui.QColor("#aaa")))
+                file_item.setForeground(empty_color)
             self._user_table.setItem(row, 2, file_item)
 
         # Ready button reflects local user's state and is gated on having
@@ -120,10 +173,9 @@ class RoomPanel(QtWidgets.QWidget):
         )
         if snap.is_ready:
             self._ready_btn.setText("I'm not ready")
-            self._ready_btn.setStyleSheet("QPushButton { background:#2a8; color:white; font-weight:bold; }")
         else:
             self._ready_btn.setText("I'm ready")
-            self._ready_btn.setStyleSheet("QPushButton { background:#444; color:white; font-weight:bold; }")
+        self._refresh_ready_button_style()
         self._ready_btn.setEnabled(snap.current_user is not None and self_has_file)
         self._ready_btn.setToolTip(
             "" if self_has_file else "Open a video file before marking yourself ready"

@@ -38,7 +38,8 @@ from syncplay.ui.modern.events import (
 from syncplay.ui.modern.messageRouter import MessageRouter
 from syncplay.ui.modern.roomPanel import RoomPanel
 from syncplay.ui.modern.roomState import RoomState
-from syncplay.ui.modern.settingsPanel import SettingsDialog
+from syncplay.ui.modern.settingsPanel import PlaybackDialog, SettingsDialog
+from syncplay.ui.modern import theme as theme_mod
 from syncplay.ui.modern.sidebarTabs import SidebarTabs
 from syncplay.ui.modern.videoControls import VideoControls
 from syncplay.ui.modern.videoWidget import VideoWidget
@@ -71,6 +72,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("syncplay-modern")
         self.resize(1100, 660)
 
+        # Apply the saved theme as early as possible so freshly-created
+        # widgets pick it up on first paint instead of flashing the
+        # default palette. The real saved value lands later in
+        # addClient() once the SyncplayClient instance is attached;
+        # until then we use the module default.
+        self._theme: str = theme_mod.DEFAULT
+        self._apply_theme(self._theme)
+
         self._client = None
         self._router = MessageRouter()
         self._router.subscribe(self._on_router_event)
@@ -89,6 +98,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Latest parsed-media metadata; populated when libvlc parses a file.
         self._fileinfo: Optional[dict] = None
         self._settings_dialog: Optional[SettingsDialog] = None
+        self._playback_dialog: Optional[PlaybackDialog] = None
 
         # Fullscreen state
         self._is_fullscreen = False
@@ -125,19 +135,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self._chat_visible = True
         self._chat_toggle = QtWidgets.QToolButton(self)
         self._chat_toggle.setText("❯")  # heavy right-pointing angle
-        self._chat_toggle.setFixedSize(22, 22)
+        # Fixed-width strip that fills the full row height so the entire
+        # gutter between video and chat is clickable, not just a small
+        # square in the middle.
+        self._chat_toggle.setFixedWidth(22)
+        self._chat_toggle.setSizePolicy(
+            QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding
+        )
         self._chat_toggle.setCursor(QtCore.Qt.PointingHandCursor)
         self._chat_toggle.setToolTip("Hide chat")
         self._chat_toggle.setFocusPolicy(QtCore.Qt.NoFocus)
-        # Transparent background; only the chevron glyph paints. A faint
-        # white wash appears on hover so the click target is still
-        # discoverable.
-        self._chat_toggle.setStyleSheet(
-            "QToolButton { background: transparent; color:#cfcfcf; "
-            "border: none; font-size: 14px; font-weight: bold; padding: 0; }"
-            "QToolButton:hover { background: rgba(255,255,255,38); color:#fff; }"
-            "QToolButton:pressed { background: rgba(255,255,255,80); }"
-        )
+        # Transparent background; only the chevron glyph paints. Stylesheet
+        # is rebuilt by `_restyle_chat_toggle()` whenever the theme flips
+        # so the chevron stays readable on both light and dark wrapper bgs.
+        self._restyle_chat_toggle()
         self._chat_toggle.clicked.connect(self._toggle_chat_panel)
 
         main = QtWidgets.QWidget()
@@ -155,9 +166,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._main_layout.setSpacing(0)
         self._main_layout.addWidget(self.videoWidget, 4)
-        # Square button vertically centered in its column — the rest of
-        # the 22-px-wide gutter falls through to the wrapper's black bg.
-        self._main_layout.addWidget(self._chat_toggle, 0, QtCore.Qt.AlignVCenter)
+        # No alignment → button fills its 22-px-wide column from top to
+        # bottom, so the whole strip between video and chat is a
+        # clickable target.
+        self._main_layout.addWidget(self._chat_toggle, 0)
         self._main_layout.addWidget(self._right_container, 1)
         self._main_wrapper = main
 
@@ -174,15 +186,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Default focus → video, so shortcuts work without an extra click
         self.videoWidget.setFocus()
 
-        # --- Status bar
-        self._status_room = QtWidgets.QLabel("(no room)")
-        self._status_room.setStyleSheet("color:#666;")
-        self._status_conn = QtWidgets.QLabel("●")
-        self._status_conn.setStyleSheet("color:#bbb;")
-        self._status_conn.setToolTip("Connection: idle")
-
-        self.statusBar().addWidget(self._status_room, 1)
-        self.statusBar().addPermanentWidget(self._status_conn, 0)
+        # Status bar removed — the Room tab already shows the current
+        # room, and the connection state is reflected via chat / errors
+        # tabs. Hidden rather than left null so any upstream code that
+        # still calls `self.statusBar()` doesn't crash.
+        self.statusBar().hide()
 
         # --- Wiring
         self._chat_panel.chatSubmitted.connect(self._on_chat_submit)
@@ -219,6 +227,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._client = client
         self._router.addClient(client)
         self._maybe_schedule_autochat()
+        # Pull the persisted theme out of the live config now that we
+        # have a client; re-apply only if it differs from the default
+        # used at startup.
+        cfg = getattr(client, "_config", None) or {}
+        saved = theme_mod.normalize(cfg.get("theme") or theme_mod.DEFAULT)
+        if saved != self._theme:
+            self._theme = saved
+            self._apply_theme(self._theme)
+            text, tip = theme_mod.button_label_for(self._theme)
+            self._theme_btn.setText(text)
+            self._theme_btn.setToolTip(tip)
 
     def showChatMessage(self, username, userMessage):
         own = self._own_username()
@@ -292,7 +311,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 traceback.print_exc()
 
     def updateRoomName(self, room=""):
-        self._status_room.setText(f"Room: {room}" if room else "(no room)")
+        # The Room tab's label is the source of truth for current room
+        # name; the bottom status bar that used to mirror it has been
+        # removed.
+        return
 
     def updateAutoPlayState(self, newState):
         return
@@ -328,8 +350,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return text if ok else ""
 
     def setSSLMode(self, sslMode, sslInfo=""):
-        if sslMode:
-            self._status_conn.setToolTip("Connection: TLS")
+        # Was used to set a "Connection: TLS" tooltip on the status-bar
+        # connection dot; the status bar has been removed.
         return
 
     def setControllerStatus(self, username, isController):
@@ -395,18 +417,11 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
     def _on_connection_state(self, event: ConnectionState) -> None:
-        if event.state == ConnectionStateKind.CONNECTED:
-            self._status_conn.setStyleSheet("color:#2a8;")
-            self._status_conn.setToolTip("Connection: connected")
-        elif event.state == ConnectionStateKind.DISCONNECTED:
-            self._status_conn.setStyleSheet("color:#c33;")
-            self._status_conn.setToolTip("Connection: disconnected")
-        elif event.state == ConnectionStateKind.RECONNECTING:
-            self._status_conn.setStyleSheet("color:#fb3;")
-            self._status_conn.setToolTip("Connection: reconnecting")
-        elif event.state == ConnectionStateKind.CONNECTING:
-            self._status_conn.setStyleSheet("color:#fb3;")
-            self._status_conn.setToolTip("Connection: connecting")
+        # Was used to drive the status-bar connection dot's colour and
+        # tooltip; with the status bar removed there's no surface to
+        # show it. Connect/disconnect/reconnect lines still show up in
+        # the Errors tab (and the chat-tab pointer), which is enough.
+        return
 
     def _on_chat_submit(self, text: str) -> None:
         if self._client is None or not text:
@@ -478,11 +493,102 @@ class MainWindow(QtWidgets.QMainWindow):
         quit_act.triggered.connect(QtWidgets.QApplication.quit)
         file_menu.addAction(quit_act)
 
-        edit_menu = bar.addMenu("&Edit")
+        # Playback gets its own top-level entry next to File — the audio
+        # / subtitle / sub-delay controls are the ones users reach for
+        # most, so they're one click away rather than buried in Settings.
+        playback_act = QtGui.QAction("&Playback…", self)
+        playback_act.triggered.connect(self._open_playback)
+        bar.addAction(playback_act)
+
+        # Settings (everything except live playback) — no sibling menu
+        # actions, so use a direct top-level action that opens the
+        # tabbed dialog on click.
         settings_act = QtGui.QAction("&Settings…", self)
         settings_act.setShortcut("Ctrl+,")
         settings_act.triggered.connect(self._open_settings)
-        edit_menu.addAction(settings_act)
+        bar.addAction(settings_act)
+
+        # Theme toggle button in the top-right corner of the menu bar.
+        # `setCornerWidget(..., TopRightCorner)` is Qt's official slot for
+        # this — no extra layout gymnastics needed.
+        text, tip = theme_mod.button_label_for(self._theme)
+        self._theme_btn = QtWidgets.QToolButton(self)
+        self._theme_btn.setText(text)
+        self._theme_btn.setToolTip(tip)
+        self._theme_btn.setAutoRaise(True)
+        self._theme_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._theme_btn.setFocusPolicy(QtCore.Qt.NoFocus)
+        self._theme_btn.setStyleSheet(
+            "QToolButton { padding: 2px 10px; font-size: 14px; border: none; }"
+            "QToolButton:hover { background: rgba(127,127,127,40); border-radius: 3px; }"
+        )
+        self._theme_btn.clicked.connect(self._toggle_theme)
+        bar.setCornerWidget(self._theme_btn, QtCore.Qt.TopRightCorner)
+
+    def _apply_theme(self, theme: str) -> None:
+        """Push the corresponding stylesheet onto the QApplication and
+        propagate the theme to per-component panels that maintain their
+        own theme-aware colour palettes (chat / errors / room logs,
+        toggle button glyph).
+        """
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(theme_mod.stylesheet_for(theme))
+        # Component-level theme propagation. The QApplication-wide
+        # stylesheet covers generic Qt widgets, but anything that emits
+        # custom HTML or sets per-widget stylesheets has to be told
+        # explicitly. These attribute checks tolerate this method being
+        # called from `__init__` before all widgets exist.
+        for panel in (
+            getattr(self, "_chat_panel", None),
+            getattr(self, "_errors_panel", None),
+            getattr(self, "_room_panel", None),
+        ):
+            if panel is not None and hasattr(panel, "apply_theme"):
+                try:
+                    panel.apply_theme(theme)
+                except Exception:
+                    pass
+        if getattr(self, "_chat_toggle", None) is not None:
+            self._restyle_chat_toggle()
+
+    def _restyle_chat_toggle(self) -> None:
+        """Recolour the chat-show/hide chevron for the current theme.
+
+        The toggle has a transparent background, so the wrapper widget's
+        themed bg shows through; the chevron foreground colour has to
+        flip to keep contrast in both modes.
+        """
+        p = theme_mod.palette(self._theme)
+        # Build with %-formatting to dodge the double-brace `{{` / `}}`
+        # escape trap that bites when mixing f-strings and plain literals
+        # in a Qt stylesheet (Qt then warns "Could not parse stylesheet").
+        qss = (
+            "QToolButton { background: transparent; color: %(fg)s; "
+            "border: none; font-size: 14px; font-weight: bold; padding: 0; }"
+            "QToolButton:hover { background: %(hbg)s; color: %(hfg)s; }"
+            "QToolButton:pressed { background: %(pbg)s; }"
+        ) % {
+            "fg": p["chat-toggle-fg"],
+            "hbg": p["chat-toggle-hover-bg"],
+            "hfg": p["chat-toggle-hover-fg"],
+            "pbg": p["chat-toggle-pressed-bg"],
+        }
+        self._chat_toggle.setStyleSheet(qss)
+
+    def _toggle_theme(self) -> None:
+        self._theme = theme_mod.toggled(self._theme)
+        self._apply_theme(self._theme)
+        text, tip = theme_mod.button_label_for(self._theme)
+        self._theme_btn.setText(text)
+        self._theme_btn.setToolTip(tip)
+        # Persist through the same path the settings dialog uses, so the
+        # value lands in the INI under [gui] alongside every other UI
+        # preference. No-op when no client is attached yet (early UI).
+        try:
+            self._persist_setting("theme", self._theme)
+        except Exception:
+            pass
 
     def _install_shortcuts(self) -> None:
         """VLC-style keyboard shortcuts, scoped to the video widget."""
@@ -761,7 +867,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._saved_chat_visible = self._chat_visible
         self._chat_toggle.setVisible(False)
         self.menuBar().setVisible(False)
-        self.statusBar().setVisible(False)
 
         # In fullscreen only the Chat tab is useful — the Room/Errors
         # tabs add noise on top of the video. Hide the tab bar and
@@ -810,16 +915,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # the cursor is over the video widget.
         QtWidgets.QApplication.instance().installEventFilter(self._mouse_filter)
 
-        autohide = 250
+        autohide = 120
         if self._client is not None:
             cfg = getattr(self._client, "_config", {}) or {}
             try:
-                autohide = int(cfg.get("fullscreenAutohideMs") or 250)
+                autohide = int(cfg.get("fullscreenAutohideMs") or 120)
             except (TypeError, ValueError):
-                autohide = 250
-        # Floor at 80 ms ("almost instant"), cap at 5 s so a typo in the
-        # INI can't make the overlay stick around forever.
-        self._autohide_timer.setInterval(max(80, min(autohide, 5000)))
+                autohide = 120
+        # Floor at 40 ms (basically instant — but not zero, so a quick
+        # mouse-out / mouse-in doesn't flash-flicker the overlay). Cap
+        # at 5 s so a typo in the INI can't make the overlay stick.
+        self._autohide_timer.setInterval(max(40, min(autohide, 5000)))
 
         # Reflect the new fullscreen state on the bar's button icon
         # without waiting for the 500 ms refresh tick.
@@ -855,7 +961,6 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
         self.menuBar().setVisible(True)
-        self.statusBar().setVisible(True)
         self.showNormal()
 
         if overlay is not None:
@@ -951,8 +1056,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self._video_controls.hide()
 
     def _brief_status(self, text: str, duration_ms: int = 1500) -> None:
-        """Quick non-modal feedback in the status bar."""
-        self.statusBar().showMessage(text, duration_ms)
+        """No-op now that the status bar is gone.
+
+        Kept as a stub so the keyboard-shortcut handlers (volume,
+        delay, speed, mute) don't have to be rewritten. If short
+        on-screen feedback is wanted later, swap this to the planned
+        in-video toast widget — the call sites won't need to change.
+        """
+        return
 
     def _open_settings(self) -> None:
         if self._client is None:
@@ -971,12 +1082,31 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             self._settings_dialog = None
 
+    def _open_playback(self) -> None:
+        if self._client is None:
+            return
+        config = getattr(self._client, "_config", {}) or {}
+        dialog = PlaybackDialog(
+            self,
+            config=config,
+            fileinfo=self._fileinfo,
+            get_player=lambda: getattr(self._client, "_player", None),
+            on_persist=self._persist_setting,
+        )
+        self._playback_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            self._playback_dialog = None
+
     def _on_fileinfo(self, fileinfo: dict) -> None:
         self._fileinfo = fileinfo
-        # If a settings dialog is open right now, refresh its dropdowns.
-        if self._settings_dialog is not None:
+        # If either dialog is open, refresh whichever owns track lists.
+        for dlg in (self._playback_dialog, self._settings_dialog):
+            if dlg is None:
+                continue
             try:
-                self._settings_dialog.set_fileinfo(fileinfo)
+                dlg.set_fileinfo(fileinfo)
             except Exception:
                 pass
 
