@@ -14,6 +14,12 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# GITHUB_TOKEN defaults to read-only since the 2023 security tightening.
+# softprops/action-gh-release needs to create / update a GitHub Release,
+# which is a write to the Contents API — grant it explicitly here.
+permissions:
+  contents: write
+
 # Opt into Node 24 runtime for JS-based actions ahead of GitHub's
 # 2026-06-02 forced flip. Most pinned actions here still ship Node 20
 # wrappers as of writing; this env makes them run on Node 24 so we can
