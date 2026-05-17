@@ -56,6 +56,63 @@ def _ensure_vlc_plugin_path() -> None:
             return
 
 
+def apply_vlc_install_path(path: str) -> None:
+    """Point libvlc at a user-configured VLC install directory.
+
+    `path` is the folder the user picked in the onboarding dialog
+    (e.g. ``C:\\Program Files\\VideoLAN\\VLC`` on Windows,
+    ``/Applications/VLC.app`` on macOS, the VLC libdir on Linux).
+    Empty/None/non-existent = no-op, defer to the platform probe.
+
+    Idempotent — safe to call repeatedly. Always called *before* the
+    first ``vlc.Instance()`` so the env is in place when ctypes loads
+    libvlc.
+    """
+    if not path:
+        return
+    path = os.path.expanduser(path).rstrip(os.sep)
+    if not os.path.isdir(path):
+        return
+
+    if sys.platform.startswith("win"):
+        # ctypes.CDLL("libvlc.dll") searches PATH; prepend our dir.
+        existing = os.environ.get("PATH", "")
+        parts = existing.split(os.pathsep) if existing else []
+        if path not in parts:
+            os.environ["PATH"] = path + os.pathsep + existing
+        plugins = os.path.join(path, "plugins")
+        if os.path.isdir(plugins):
+            os.environ["VLC_PLUGIN_PATH"] = plugins
+    elif sys.platform == "darwin":
+        # Accept either '/Applications/VLC.app' or its inner libdir.
+        plugin_candidates = [
+            os.path.join(path, "Contents", "MacOS", "plugins"),
+            os.path.join(path, "plugins"),
+        ]
+        for cand in plugin_candidates:
+            if os.path.isdir(cand):
+                os.environ["VLC_PLUGIN_PATH"] = cand
+                break
+        lib_dir = os.path.join(path, "Contents", "MacOS", "lib")
+        if os.path.isdir(lib_dir):
+            existing = os.environ.get("DYLD_LIBRARY_PATH", "")
+            parts = existing.split(os.pathsep) if existing else []
+            if lib_dir not in parts:
+                os.environ["DYLD_LIBRARY_PATH"] = lib_dir + os.pathsep + existing
+    else:
+        # Linux: user may have picked the plugins dir itself, its parent,
+        # or the directory holding libvlc.so. Set VLC_PLUGIN_PATH from
+        # the first plausible candidate.
+        if os.path.basename(path) == "plugins":
+            os.environ["VLC_PLUGIN_PATH"] = path
+        else:
+            plugins = os.path.join(path, "plugins")
+            if os.path.isdir(plugins):
+                os.environ["VLC_PLUGIN_PATH"] = plugins
+            else:
+                os.environ["VLC_PLUGIN_PATH"] = path
+
+
 _ensure_vlc_plugin_path()
 
 

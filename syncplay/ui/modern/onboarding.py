@@ -13,12 +13,45 @@ Exposes the contract `ConfigurationGetter` expects from a GUI config screen:
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 
 _DEFAULT_PORT = 8997
+
+
+def _looks_like_vlc_dir(path: str) -> bool:
+    """Best-effort: does this directory smell like a VLC install?
+
+    Returns True if we can spot a libvlc binary or a sibling ``plugins``
+    folder. False otherwise — we still save the path either way and let
+    libvlc surface the real error at load time.
+    """
+    if not path or not os.path.isdir(path):
+        return False
+    try:
+        entries = os.listdir(path)
+    except OSError:
+        return False
+    for entry in entries:
+        low = entry.lower()
+        if low.startswith("libvlc") and (
+            low.endswith(".dll")
+            or low.endswith(".dylib")
+            or low.endswith(".so")
+            or ".so." in low
+        ):
+            return True
+    if os.path.isdir(os.path.join(path, "plugins")):
+        return True
+    if sys.platform == "darwin" and os.path.isdir(
+        os.path.join(path, "Contents", "MacOS")
+    ):
+        return True
+    return False
 
 
 def _coerce_password(raw) -> str:
@@ -41,7 +74,7 @@ class Onboarding(QtWidgets.QDialog):
         self._save_after_accept = False
 
         self.setWindowTitle("Connect to a Syncplay room")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(480)
 
         form = QtWidgets.QFormLayout()
 
@@ -71,6 +104,26 @@ class Onboarding(QtWidgets.QDialog):
         self._password_edit.setEchoMode(QtWidgets.QLineEdit.Password)
         self._password_edit.setPlaceholderText("Optional")
         form.addRow("Server password", self._password_edit)
+
+        # VLC install location — auto-detected on most systems; the field
+        # exists for people whose VLC is in a non-default location.
+        self._vlc_path_edit = QtWidgets.QLineEdit(config.get("vlcInstallPath") or "")
+        self._vlc_path_edit.setPlaceholderText("auto-detect")
+        self._vlc_browse_btn = QtWidgets.QPushButton("Browse…")
+        self._vlc_browse_btn.clicked.connect(self._on_browse_vlc_path)
+        vlc_row = QtWidgets.QHBoxLayout()
+        vlc_row.addWidget(self._vlc_path_edit, 1)
+        vlc_row.addWidget(self._vlc_browse_btn)
+        form.addRow("VLC location", vlc_row)
+
+        self._vlc_hint = QtWidgets.QLabel(
+            "Only set this if VLC isn't installed in the default location."
+        )
+        self._vlc_hint.setStyleSheet("color:#888;")
+        self._vlc_hint.setWordWrap(True)
+        form.addRow("", self._vlc_hint)
+        self._vlc_path_edit.editingFinished.connect(self._validate_vlc_path)
+        self._validate_vlc_path()
 
         self._run_btn = QtWidgets.QPushButton("Run")
         self._run_btn.setToolTip("Use these values for this session only; don't change the saved config.")
@@ -129,6 +182,7 @@ class Onboarding(QtWidgets.QDialog):
             "room": room,
             "password": self._password_edit.text(),
             "playerPath": "__embedded_vlc__",
+            "vlcInstallPath": self._vlc_path_edit.text().strip(),
         }
         self._save_after_accept = persist
         self._accepted = True
@@ -145,3 +199,33 @@ class Onboarding(QtWidgets.QDialog):
 
     def should_persist_dialog_fields(self) -> bool:
         return self._save_after_accept
+
+    def _on_browse_vlc_path(self) -> None:
+        start = self._vlc_path_edit.text().strip() or os.path.expanduser("~")
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select VLC installation folder", start
+        )
+        if folder:
+            self._vlc_path_edit.setText(folder)
+            self._validate_vlc_path()
+
+    def _validate_vlc_path(self) -> None:
+        path = self._vlc_path_edit.text().strip()
+        if not path:
+            self._vlc_hint.setStyleSheet("color:#888;")
+            self._vlc_hint.setText(
+                "Only set this if VLC isn't installed in the default location."
+            )
+            return
+        if not os.path.isdir(path):
+            self._vlc_hint.setStyleSheet("color:#c33;")
+            self._vlc_hint.setText("Folder doesn't exist.")
+            return
+        if _looks_like_vlc_dir(path):
+            self._vlc_hint.setStyleSheet("color:#888;")
+            self._vlc_hint.setText("Looks like a VLC install.")
+        else:
+            self._vlc_hint.setStyleSheet("color:#c33;")
+            self._vlc_hint.setText(
+                "Couldn't find libvlc here — saving anyway; loader will surface the real error."
+            )

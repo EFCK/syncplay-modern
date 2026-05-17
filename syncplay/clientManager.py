@@ -7,6 +7,8 @@ from syncplay.ui.ConfigurationGetter import ConfigurationGetter
 class SyncplayClientManager(object):
     def run(self):
         config = ConfigurationGetter().getConfiguration()
+        from syncplay.players import embedded_vlc
+        embedded_vlc.apply_vlc_install_path(config.get("vlcInstallPath", ""))
         from syncplay.client import SyncplayClient  # Imported later, so the proper reactor is installed
         menuBar = config['menuBar'] if 'menuBar' in config else None
         interface = ui.getUi(graphical=not config["noGui"], passedBar=menuBar)

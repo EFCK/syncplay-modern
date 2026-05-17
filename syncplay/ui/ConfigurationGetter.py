@@ -111,6 +111,7 @@ class ConfigurationGetter(object):
             "fullscreenAutohideMs": 120,
             "subtitleDelayDefaultMs": 0,
             "theme": "light",          # "light" | "dark"
+            "vlcInstallPath": "",      # empty = auto-detect; see embedded_vlc.apply_vlc_install_path
         }
 
         self._defaultConfig = self._config.copy()
@@ -221,7 +222,8 @@ class ConfigurationGetter(object):
                 "sharedPlaylistEnabled", "loopAtEndOfPlaylist",
                 "loopSingleFiles",
                 "autoplayRequireSameFilenames",
-                "onlySwitchToTrustedDomains", "trustedDomains", "publicServers"],
+                "onlySwitchToTrustedDomains", "trustedDomains", "publicServers",
+                "vlcInstallPath"],
             "gui": [
                 "autosaveJoinsToList",
                 "showOSD", "showOSDWarnings", "showSlowdownOSD",
