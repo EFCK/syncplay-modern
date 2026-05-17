@@ -108,7 +108,7 @@ class ConfigurationGetter(object):
             # syncplay-modern additions
             "chatOnVideoEnabled": False,
             "layoutChatCollapsed": False,
-            "fullscreenAutohideMs": 3000,
+            "fullscreenAutohideMs": 250,
             "subtitleDelayDefaultMs": 0,
         }
 

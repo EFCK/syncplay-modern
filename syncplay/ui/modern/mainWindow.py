@@ -33,7 +33,6 @@ from syncplay.ui.modern.events import (
     UserFileChanged,
     UserJoined,
     UserLeft,
-    UserPresence,
     UserReadyChanged,
 )
 from syncplay.ui.modern.messageRouter import MessageRouter
@@ -41,7 +40,6 @@ from syncplay.ui.modern.roomPanel import RoomPanel
 from syncplay.ui.modern.roomState import RoomState
 from syncplay.ui.modern.settingsPanel import SettingsDialog
 from syncplay.ui.modern.sidebarTabs import SidebarTabs
-from syncplay.ui.modern.userStrip import UserStrip
 from syncplay.ui.modern.videoControls import VideoControls
 from syncplay.ui.modern.videoWidget import VideoWidget
 
@@ -101,8 +99,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._autohide_timer.setSingleShot(True)
         self._autohide_timer.timeout.connect(self._fs_hide_overlay)
 
-        # --- Right: user strip on top, sidebar tabs below
-        self._user_strip = UserStrip()
+        # --- Right: sidebar tabs (Room / Chat / Errors). The old
+        # `UserStrip` row above the tabs was redundant with the Room
+        # tab's user table and the status-bar room label, and rendered
+        # as a black gap once the wrapper went black-filled, so it's
+        # been removed.
         self._chat_panel = ChatPanel()
         self._room_panel = RoomPanel()
         self._room_panel.readyToggleRequested.connect(self._on_ready_toggle)
@@ -113,7 +114,6 @@ class MainWindow(QtWidgets.QMainWindow):
         right_layout = QtWidgets.QVBoxLayout(self._right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
-        right_layout.addWidget(self._user_strip, 0)
         right_layout.addWidget(self._tabs, 1)
 
         # --- Main horizontal layout: video | toggle | chat at fixed 80/20.
@@ -125,16 +125,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self._chat_visible = True
         self._chat_toggle = QtWidgets.QToolButton(self)
         self._chat_toggle.setText("❯")  # heavy right-pointing angle
-        self._chat_toggle.setFixedSize(22, 22)  # square; vertically centered in its slot
+        self._chat_toggle.setFixedSize(22, 22)
         self._chat_toggle.setCursor(QtCore.Qt.PointingHandCursor)
         self._chat_toggle.setToolTip("Hide chat")
         self._chat_toggle.setFocusPolicy(QtCore.Qt.NoFocus)
+        # Transparent background; only the chevron glyph paints. A faint
+        # white wash appears on hover so the click target is still
+        # discoverable.
         self._chat_toggle.setStyleSheet(
-            "QToolButton { background: transparent; color: #ccc; "
+            "QToolButton { background: transparent; color:#cfcfcf; "
             "border: none; font-size: 14px; font-weight: bold; padding: 0; }"
-            "QToolButton:hover { background: rgba(255, 255, 255, 30); "
-            "color: #fff; border-radius: 3px; }"
-            "QToolButton:pressed { background: rgba(0, 0, 0, 80); }"
+            "QToolButton:hover { background: rgba(255,255,255,38); color:#fff; }"
+            "QToolButton:pressed { background: rgba(255,255,255,80); }"
         )
         self._chat_toggle.clicked.connect(self._toggle_chat_panel)
 
@@ -153,6 +155,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._main_layout.setSpacing(0)
         self._main_layout.addWidget(self.videoWidget, 4)
+        # Square button vertically centered in its column — the rest of
+        # the 22-px-wide gutter falls through to the wrapper's black bg.
         self._main_layout.addWidget(self._chat_toggle, 0, QtCore.Qt.AlignVCenter)
         self._main_layout.addWidget(self._right_container, 1)
         self._main_wrapper = main
@@ -278,21 +282,8 @@ class MainWindow(QtWidgets.QMainWindow):
             print(f"[debug] {message}", file=sys.stderr, flush=True)
 
     def showUserList(self, currentUser, rooms):
-        users: list[dict] = []
-        current_room = ""
-        for room_name, members in rooms.items():
-            for user in members:
-                users.append({
-                    "name": getattr(user, "username", "?"),
-                    "ready": user.isReady() if hasattr(user, "isReady") else False,
-                    "is_self": (user is currentUser),
-                })
-            if currentUser in members:
-                current_room = room_name
-        self._user_strip.setRoom(current_room)
-        self._user_strip.setUsers(users)
-        # Also feed the Room tab: diff against the previous snapshot and
-        # emit the per-user typed events + a fresh RoomSnapshot.
+        # The Room tab consumes the same data via RoomState — feed it
+        # the diffed/typed events plus a fresh RoomSnapshot.
         try:
             self._room_state.update_from_rooms(currentUser, rooms)
         except Exception:
@@ -302,7 +293,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def updateRoomName(self, room=""):
         self._status_room.setText(f"Room: {room}" if room else "(no room)")
-        self._user_strip.setRoom(room)
 
     def updateAutoPlayState(self, newState):
         return
@@ -384,9 +374,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._chat_panel.render_error_notice()
         elif isinstance(event, ConnectionState):
             self._on_connection_state(event)
-        elif isinstance(event, UserPresence):
-            self._user_strip.setRoom(event.room)
-            self._user_strip.setUsers(event.users)
         elif isinstance(event, RoomSnapshot):
             self._room_panel.set_snapshot(event)
         elif isinstance(event, UserJoined):
@@ -757,7 +744,12 @@ class MainWindow(QtWidgets.QMainWindow):
     # --- Fullscreen + chat overlay ---------------------------------------
 
     OVERLAY_EDGE_PX = 40        # mouse-X within this many px of right edge → reveal
-    OVERLAY_WIDTH_FRACTION = 0.28  # overlay covers this much of the screen width
+    OVERLAY_WIDTH_FRACTION = 0.17  # overlay covers this much of the screen width
+                                   # (slightly less than the windowed 20% so it
+                                   # feels like a floating panel, not a slab).
+    OVERLAY_TOP_INSET = 96         # px dropped from the top so the chat floats.
+    OVERLAY_BOTTOM_INSET = 96      # px lifted off the bottom so the chat input
+                                   # clears the auto-hide progress bar.
 
     def _fs_enter(self) -> None:
         if self._is_fullscreen:
@@ -771,14 +763,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.menuBar().setVisible(False)
         self.statusBar().setVisible(False)
 
+        # In fullscreen only the Chat tab is useful — the Room/Errors
+        # tabs add noise on top of the video. Hide the tab bar and
+        # force Chat, then put everything back on exit.
+        self._saved_tab_index = self._tabs.currentIndex()
+        self._tabs.setCurrentIndex(SidebarTabs.CHAT_INDEX)
+        self._tabs.tabBar().setVisible(False)
+
         # Build the overlay frame parented to MainWindow so it floats above
-        # the video area without becoming a separate window.
+        # the video area. Keeping this as a regular child widget (no
+        # `WA_TranslucentBackground`) means the look is the same on every
+        # platform — true transparency over a libvlc native X window
+        # needs a compositor and would only work on some setups, which
+        # is intentionally deferred for now.
         self._overlay = QtWidgets.QFrame(self)
         self._overlay.setObjectName("fsOverlay")
         self._overlay.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self._overlay.setStyleSheet(
-            "QFrame#fsOverlay { background: rgba(20, 20, 20, 217); "
-            "border-left: 1px solid #444; }"
+            # Dark, opaque-ish wash with rounded corners so it reads as a
+            # floating chat panel rather than a screen-edge slab.
+            "QFrame#fsOverlay { background: rgb(22, 22, 22); "
+            "border: 1px solid #444; border-radius: 8px; }"
+            "QFrame#fsOverlay QTabWidget::pane { background: transparent; border: none; }"
+            "QFrame#fsOverlay QWidget { background: transparent; color: #f0f0f0; }"
+            "QFrame#fsOverlay QTextBrowser { background: transparent; "
+            "color: #f5f5f5; border: none; padding: 4px; }"
+            "QFrame#fsOverlay QLineEdit { background: #2a2a2a; "
+            "color: #ffffff; border: 1px solid #555; "
+            "border-radius: 4px; padding: 4px; }"
         )
         layout = QtWidgets.QVBoxLayout(self._overlay)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -798,14 +810,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # the cursor is over the video widget.
         QtWidgets.QApplication.instance().installEventFilter(self._mouse_filter)
 
-        autohide = 3000
+        autohide = 250
         if self._client is not None:
             cfg = getattr(self._client, "_config", {}) or {}
             try:
-                autohide = int(cfg.get("fullscreenAutohideMs") or 3000)
+                autohide = int(cfg.get("fullscreenAutohideMs") or 250)
             except (TypeError, ValueError):
-                autohide = 3000
-        self._autohide_timer.setInterval(max(500, autohide))
+                autohide = 250
+        # Floor at 80 ms ("almost instant"), cap at 5 s so a typo in the
+        # INI can't make the overlay stick around forever.
+        self._autohide_timer.setInterval(max(80, min(autohide, 5000)))
 
         # Reflect the new fullscreen state on the bar's button icon
         # without waiting for the 500 ms refresh tick.
@@ -833,6 +847,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "Hide chat" if self._chat_visible else "Show chat"
         )
 
+        # Bring the tab bar back and restore whatever tab the user was on.
+        self._tabs.tabBar().setVisible(True)
+        try:
+            self._tabs.setCurrentIndex(self._saved_tab_index)
+        except Exception:
+            pass
+
         self.menuBar().setVisible(True)
         self.statusBar().setVisible(True)
         self.showNormal()
@@ -847,7 +868,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._overlay is None:
             return
         width = max(280, int(self.width() * self.OVERLAY_WIDTH_FRACTION))
-        self._overlay.setGeometry(self.width() - width, 0, width, self.height())
+        top = self.OVERLAY_TOP_INSET
+        height = max(160, self.height() - top - self.OVERLAY_BOTTOM_INSET)
+        self._overlay.setGeometry(self.width() - width, top, width, height)
 
     def _fs_reveal_overlay(self) -> None:
         if self._overlay is None:
