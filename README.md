@@ -5,10 +5,12 @@ Built around an embedded libvlc player so video and chat live in the same
 window, with a Teleparty-style layout: video on the left, a collapsible chat
 panel on the right.
 
-> **Status:** v0.1.0-alpha. All eight initial phases are merged and tagged.
-> The protocol layer is reused unchanged from upstream Syncplay; the GUI and
-> player adapter have been replaced. Linux is the primary build target so
-> far — Windows/macOS bundles are not yet verified.
+> **Status:** v0.1.0-alpha plus an in-progress v0.2 cycle (in-video toasts,
+> shared playlist UI, pytest suite, Windows builds via GitHub Actions).
+> The protocol layer is reused unchanged from upstream Syncplay; the GUI
+> and player adapter have been replaced. Linux is the primary development
+> target. Windows zips are produced by CI and available from Releases;
+> macOS users currently run from source.
 
 ## Aim of this project
 
@@ -152,6 +154,34 @@ and run it directly:
 The bundle still needs VLC installed on the host (it links libvlc
 dynamically) but doesn't need Python or `uv`.
 
+### Run on Windows (prebuilt)
+
+1. Install **64-bit VLC for Windows** from <https://www.videolan.org/>.
+   The app loads `libvlc.dll` from the system VLC at runtime — you don't
+   need to launch VLC itself, but the install supplies the DLLs.
+2. Download the latest `syncplay-modern-vX.Y.Z-windows.zip` from the
+   [Releases page](https://github.com/EFCK/syncplay-modern/releases). If
+   no Release is up yet, the most recent CI build is downloadable from
+   the **Actions** tab → most recent green run → **Artifacts**.
+3. Unzip anywhere. The build is portable — no installer, no registry
+   entries.
+4. Double-click `syncplay-modern.exe` inside the unzipped folder.
+5. On first launch, Windows SmartScreen may show "Windows protected your
+   PC" because the binary is unsigned. Click **More info** → **Run
+   anyway**. The prompt is cached per binary; subsequent launches don't
+   show it.
+6. Fill in the connect dialog: nickname, server (`syncplay.pl`), port
+   (`8997`), and any room name. Leave **VLC location** blank if VLC is
+   in `C:\Program Files\VideoLAN\VLC`. If you installed VLC somewhere
+   else (portable install, different drive), click **Browse** and pick
+   the folder containing `libvlc.dll`.
+7. Click **Update Config and Run** to save the settings to
+   `%APPDATA%\Syncplay\` and use them this session, or **Run** to use
+   them for this session only without persisting.
+
+The Windows .exe is x64. You need 64-bit VLC; the 32-bit installer
+won't work.
+
 ## Building a distributable bundle
 
 ### Linux
@@ -166,18 +196,36 @@ still need VLC installed (`sudo apt install vlc` on Debian/Ubuntu).
 `VLC_PLUGIN_PATH` is auto-detected from the standard system locations at
 startup.
 
-### Windows / macOS
+### Windows
 
-Upstream Syncplay ships `buildPy2exe.py` (Windows) and `buildPy2app.py`
-(macOS); both are still present in this repo but have not been verified
-against the new UI / player. The PyInstaller `.spec` at
-`build/syncplay-modern.spec` is cross-platform and should produce a
-working bundle on Windows or macOS too — copy the steps from
-`build/build-linux.sh`, replacing the shell idioms. On those platforms
-libvlc DLLs / dylibs must either be bundled (add them to the spec's
-`binaries=` list) or rely on a system VLC install.
+Windows zips are built by GitHub Actions on every `v*` tag push and on
+manual workflow dispatch — see `.github/workflows/build-windows.yml`.
+The workflow runs `pyinstaller build/syncplay-modern.spec` on a
+`windows-latest` runner, zips `dist/syncplay-modern/`, and attaches the
+result to the GitHub Release for tagged builds.
 
-Contributions verifying Windows / macOS builds are welcome.
+To build locally on Windows (requires Python 3.12, uv, and VLC):
+
+```pwsh
+uv venv
+uv pip install -e .
+uv pip install pyinstaller
+uv run pyinstaller --noconfirm build/syncplay-modern.spec
+# → dist/syncplay-modern/syncplay-modern.exe
+```
+
+libvlc is **not** bundled — the .exe links against the user's system
+VLC install via `libvlc.dll`. The "VLC location" field in the
+onboarding dialog lets users point at non-default VLC install paths.
+
+### macOS
+
+No CI workflow yet. The PyInstaller spec at `build/syncplay-modern.spec`
+is cross-platform and should produce a working `.app` on macOS, but
+this has not been verified. The legacy `buildPy2app.py` in the repo
+root is upstream's py2app driver and is unmaintained for this fork.
+For now, macOS users run from source via `uv run syncplayClient.py`.
+Contributions verifying a macOS build are welcome.
 
 ## License
 
