@@ -77,10 +77,13 @@ class VideoControls(QtWidgets.QFrame):
             "QToolButton { color: #eee; background: transparent; "
             "border: none; padding: 4px 8px; font-size: 14px; }"
             "QToolButton:hover { background: #2a2a2a; border-radius: 3px; }"
+            "QToolButton:pressed { background: #1a1a1a; border-radius: 3px; }"
             "QLabel { color: #ccc; font-size: 11px; min-width: 44px; }"
             "QSlider::groove:horizontal { background: #444; height: 4px; "
             "border-radius: 2px; }"
             "QSlider::sub-page:horizontal { background: #2a8; border-radius: 2px; }"
+            "QSlider::add-page:horizontal { background: #2a2a2a; "
+            "border-radius: 2px; }"
             "QSlider::handle:horizontal { background: #fff; width: 10px; "
             "margin: -4px 0; border-radius: 5px; }"
         )
@@ -89,6 +92,9 @@ class VideoControls(QtWidgets.QFrame):
         self._play_btn = QtWidgets.QToolButton(self)
         self._play_btn.setText("▶")
         self._play_btn.setToolTip("Play / Pause")
+        # AutoRaise suppresses the native Windows button frame so the
+        # stylesheet's transparent background actually shows through.
+        self._play_btn.setAutoRaise(True)
         self._play_btn.clicked.connect(self.playPauseRequested.emit)
 
         self._time_current = QtWidgets.QLabel("0:00", self)
@@ -113,6 +119,7 @@ class VideoControls(QtWidgets.QFrame):
         self._mute_btn = QtWidgets.QToolButton(self)
         self._mute_btn.setText("🔊")
         self._mute_btn.setToolTip("Mute")
+        self._mute_btn.setAutoRaise(True)
         self._mute_btn.clicked.connect(self.muteToggleRequested.emit)
 
         self._volume = _JumpSlider(QtCore.Qt.Horizontal, self)
@@ -128,6 +135,7 @@ class VideoControls(QtWidgets.QFrame):
         self._fs_btn = QtWidgets.QToolButton(self)
         self._fs_btn.setText("⛶")
         self._fs_btn.setToolTip("Fullscreen")
+        self._fs_btn.setAutoRaise(True)
         self._fs_btn.clicked.connect(self.fullscreenToggleRequested.emit)
 
         layout = QtWidgets.QHBoxLayout(self)
