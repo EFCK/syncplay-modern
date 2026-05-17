@@ -45,18 +45,26 @@ class Toast(QtWidgets.QFrame):
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
+        # Padding lives on the wrapping QFrame's layout margins, not as
+        # CSS padding on the QLabel: QLabel's sizeHint() under-reports
+        # height for word-wrapped text when CSS padding is set, so
+        # multi-line toasts got clipped vertically. With the bubble as
+        # a QFrame containing a plain QLabel, Qt's natural sizing
+        # works correctly.
         self.setStyleSheet(
             "QFrame#toastStack { background: transparent; }"
-            "QLabel.toastLine { "
-            "  background: rgba(22, 22, 22, 220); color: #f4f4f4; "
-            "  padding: 18px 26px; border-radius: 10px; font-size: 17px; "
+            "QFrame#toastBubble { "
+            "  background: rgba(22, 22, 22, 220); border-radius: 10px; "
+            "}"
+            "QLabel#toastText { "
+            "  color: #f4f4f4; font-size: 17px; background: transparent; "
             "}"
         )
         self._layout = QtWidgets.QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(6)
         self._layout.addStretch(1)  # push labels to the top
-        self._labels: Deque[QtWidgets.QLabel] = deque()
+        self._labels: Deque[QtWidgets.QFrame] = deque()
         self.hide()
 
     def show_message(self, text: str, duration: int | None = None) -> None:
@@ -66,27 +74,32 @@ class Toast(QtWidgets.QFrame):
         if duration is None or duration <= 0:
             duration = self.DEFAULT_DURATION_MS
 
-        label = QtWidgets.QLabel(text, self)
-        label.setProperty("class", "toastLine")
+        bubble = QtWidgets.QFrame(self)
+        bubble.setObjectName("toastBubble")
+        bubble.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        bubble.setMinimumWidth(220)
+        bubble.setMaximumWidth(460)
+
+        label = QtWidgets.QLabel(text, bubble)
+        label.setObjectName("toastText")
         label.setTextFormat(QtCore.Qt.PlainText)
         label.setWordWrap(True)
-        label.setMinimumWidth(220)
-        label.setMaximumWidth(460)
         label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-        # Stylesheet selector uses `class` property; re-polish so it picks up.
-        label.style().unpolish(label)
-        label.style().polish(label)
+
+        inner = QtWidgets.QHBoxLayout(bubble)
+        inner.setContentsMargins(26, 18, 26, 18)
+        inner.addWidget(label)
 
         # Insert above the stretch (stretch is the last item).
-        self._layout.insertWidget(self._layout.count() - 1, label, 0, QtCore.Qt.AlignRight)
-        self._labels.append(label)
+        self._layout.insertWidget(self._layout.count() - 1, bubble, 0, QtCore.Qt.AlignRight)
+        self._labels.append(bubble)
 
         # Cap stack depth — drop the oldest.
         while len(self._labels) > self.MAX_STACK:
             oldest = self._labels.popleft()
             self._remove_label(oldest)
 
-        QtCore.QTimer.singleShot(duration, lambda lbl=label: self._expire(lbl))
+        QtCore.QTimer.singleShot(duration, lambda lbl=bubble: self._expire(lbl))
 
         if not self.isVisible():
             self.show()
@@ -105,14 +118,14 @@ class Toast(QtWidgets.QFrame):
         y = video_geometry_in_window.y() + inset
         self.setGeometry(x, y, width, height)
 
-    def _expire(self, label: QtWidgets.QLabel) -> None:
+    def _expire(self, label: QtWidgets.QFrame) -> None:
         try:
             self._labels.remove(label)
         except ValueError:
             return  # already removed by stack-cap eviction
         self._remove_label(label)
 
-    def _remove_label(self, label: QtWidgets.QLabel) -> None:
+    def _remove_label(self, label: QtWidgets.QFrame) -> None:
         self._layout.removeWidget(label)
         label.deleteLater()
         if not self._labels:
