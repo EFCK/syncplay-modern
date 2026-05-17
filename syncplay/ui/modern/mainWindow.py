@@ -867,7 +867,7 @@ class MainWindow(QtWidgets.QMainWindow):
     VC_HIDE_AFTER_S = 2.5      # auto-hide after no cursor motion for this long
     VC_BAR_HEIGHT = 34         # matches VideoControls.setFixedHeight
     VC_BAR_MARGIN_H = 8        # left / right inset from the video edge
-    VC_BAR_MARGIN_BOTTOM = 4   # small breathing-room gap below the bar
+    VC_BAR_MARGIN_BOTTOM = 0   # flush with the video bottom edge
     VC_MIN_BAR_WIDTH = 280     # below this the bar is hidden — splitter too narrow
 
     def _on_seek_to_seconds(self, seconds: float) -> None:
