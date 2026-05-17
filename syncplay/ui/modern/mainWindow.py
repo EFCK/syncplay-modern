@@ -398,6 +398,35 @@ class MainWindow(QtWidgets.QMainWindow):
     def getUIMode(self):
         return "GUI"
 
+    def closeEvent(self, event):
+        """Tear down libvlc and the Twisted reactor on window close.
+
+        Without this the default Qt close hides the window but
+        SyncplayClient.stop() never runs — libvlc worker threads keep
+        the Python process alive and audio keeps playing. Particularly
+        bad on Windows where the user has no terminal to Ctrl+C from
+        and has to kill the process via Task Manager.
+
+        Hides the top-level toast first so quitOnLastWindowClosed isn't
+        held off by it, calls _client.stop() (the canonical Syncplay
+        teardown: destroyProtocol → player.drop → reactor.stop), then
+        schedules a QApplication.quit fallback in case qt5reactor's
+        reactor-to-Qt propagation doesn't fire on Windows.
+        """
+        try:
+            toast = getattr(self, "_toast", None)
+            if toast is not None:
+                toast.hide()
+        except Exception:
+            pass
+        try:
+            if self._client is not None and hasattr(self._client, "stop"):
+                self._client.stop()
+        except Exception:
+            pass
+        QtCore.QTimer.singleShot(300, QtWidgets.QApplication.quit)
+        super().closeEvent(event)
+
     # ----------------------------------------------------------------------
     # Internals
     # ----------------------------------------------------------------------
@@ -589,7 +618,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         quit_act = QtGui.QAction("&Quit", self)
         quit_act.setShortcut(QtGui.QKeySequence.Quit)
-        quit_act.triggered.connect(QtWidgets.QApplication.quit)
+        # Route through self.close() so closeEvent runs the libvlc /
+        # reactor teardown — QApplication.quit() alone leaves audio
+        # threads playing.
+        quit_act.triggered.connect(self.close)
         file_menu.addAction(quit_act)
 
         # Playback gets its own top-level entry next to File — the audio
