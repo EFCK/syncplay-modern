@@ -26,9 +26,17 @@ from __future__ import annotations
 
 import os
 import sys
+import time as _time
 from typing import Callable, Optional
 
 from syncplay.players.basePlayer import BasePlayer
+
+
+# Window during which we trust our own seek target over libvlc's reported
+# time. libvlc's get_time() lags 100-500 ms behind a set_time() while it
+# flushes and re-primes the decoder; reporting the stale value back to the
+# sync algorithm causes phantom drift and the rewind/fast-forward ping-pong.
+_POSITION_COOLDOWN_S = 1.0
 
 
 def _ensure_vlc_plugin_path() -> None:
@@ -212,6 +220,8 @@ class EmbeddedVlcPlayer(BasePlayer):
         self._current_media = None
         self._opened_path: Optional[str] = None
         self._opened_duration: float = 0.0
+        self._last_set_position: Optional[float] = None
+        self._last_set_position_at: float = 0.0
 
         em = self._player.event_manager()
         em.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_end_reached)
@@ -259,6 +269,20 @@ class EmbeddedVlcPlayer(BasePlayer):
         # We treat anything that isn't actively playing as paused so the
         # sync state machine doesn't try to advance during buffering.
         active = state == self._vlc.State.Playing
+        if self._last_set_position is not None:
+            elapsed = _time.monotonic() - self._last_set_position_at
+            if elapsed < _POSITION_COOLDOWN_S:
+                if active:
+                    try:
+                        rate = float(self._player.get_rate() or 1.0)
+                    except Exception:
+                        rate = 1.0
+                    projected = self._last_set_position + elapsed * rate
+                else:
+                    projected = self._last_set_position
+                position = max(position, projected)
+            else:
+                self._last_set_position = None
         client.updatePlayerStatus(not active, position)
 
     def setPaused(self, value: bool) -> None:
@@ -273,7 +297,10 @@ class EmbeddedVlcPlayer(BasePlayer):
             self._player.set_pause(0)
 
     def setPosition(self, value: float) -> None:
-        self._player.set_time(int(max(0.0, value) * 1000))
+        target = max(0.0, value)
+        self._player.set_time(int(target * 1000))
+        self._last_set_position = target
+        self._last_set_position_at = _time.monotonic()
 
     def setSpeed(self, value: float) -> None:
         self._player.set_rate(float(value))
@@ -303,6 +330,8 @@ class EmbeddedVlcPlayer(BasePlayer):
         self._current_media = media
         self._opened_path = filePath
         self._opened_duration = 0.0
+        self._last_set_position = None
+        self._last_set_position_at = 0.0
 
         self._player.set_media(media)
         if self._video_widget is not None:
