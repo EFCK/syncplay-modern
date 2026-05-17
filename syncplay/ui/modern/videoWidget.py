@@ -42,15 +42,38 @@ class VideoWidget(QtWidgets.QWidget):
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
 
         self._placeholder_text = "Drop a file here or use File → Open…"
+        # One-shot flag: paint black for the *next* paint event even when
+        # libvlc owns the surface. Used after the chat sidebar is hidden
+        # so the area the video just grew into doesn't show stale chat
+        # pixels until libvlc draws its next frame.
+        self._black_once = False
 
     def paintEvent(self, event):
-        if not self._placeholder_text:
-            return  # libvlc owns the pixels — do not draw.
-        painter = QtGui.QPainter(self)
-        painter.fillRect(self.rect(), QtGui.QColor(0, 0, 0))
-        painter.setPen(QtGui.QColor(170, 170, 170))
-        painter.drawText(self.rect(), QtCore.Qt.AlignCenter, self._placeholder_text)
-        painter.end()
+        if self._placeholder_text:
+            painter = QtGui.QPainter(self)
+            painter.fillRect(self.rect(), QtGui.QColor(0, 0, 0))
+            painter.setPen(QtGui.QColor(170, 170, 170))
+            painter.drawText(self.rect(), QtCore.Qt.AlignCenter, self._placeholder_text)
+            painter.end()
+            return
+        if self._black_once:
+            self._black_once = False
+            painter = QtGui.QPainter(self)
+            painter.fillRect(self.rect(), QtGui.QColor(0, 0, 0))
+            painter.end()
+            return
+        # libvlc owns the pixels — do not draw.
+
+    def request_black_repaint(self) -> None:
+        """Force one black-fill paint on the next event tick.
+
+        libvlc draws into our native window asynchronously, so when the
+        widget grows (chat hidden) the new area shows whatever was there
+        before until libvlc catches up. This paints it black once so the
+        gap isn't filled with stale UI pixels.
+        """
+        self._black_once = True
+        self.update()
 
     def clear_placeholder(self) -> None:
         self._placeholder_text = ""

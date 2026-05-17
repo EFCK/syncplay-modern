@@ -110,14 +110,24 @@ class RoomPanel(QtWidgets.QWidget):
                 file_item.setForeground(QtGui.QBrush(QtGui.QColor("#aaa")))
             self._user_table.setItem(row, 2, file_item)
 
-        # Ready button reflects local user's state.
+        # Ready button reflects local user's state and is gated on having
+        # a file loaded — readiness without media is meaningless and would
+        # only confuse peers, who'd see "alice is ready" without knowing
+        # what for.
+        self_has_file = any(
+            u.get("is_self") and u.get("filename")
+            for u in snap.users
+        )
         if snap.is_ready:
             self._ready_btn.setText("I'm not ready")
             self._ready_btn.setStyleSheet("QPushButton { background:#2a8; color:white; font-weight:bold; }")
         else:
             self._ready_btn.setText("I'm ready")
             self._ready_btn.setStyleSheet("QPushButton { background:#444; color:white; font-weight:bold; }")
-        self._ready_btn.setEnabled(snap.current_user is not None)
+        self._ready_btn.setEnabled(snap.current_user is not None and self_has_file)
+        self._ready_btn.setToolTip(
+            "" if self_has_file else "Open a video file before marking yourself ready"
+        )
 
     def append_log_line(self, html_class: str, text: str, timestamp: float | None = None) -> None:
         ts = time.strftime("%H:%M:%S", time.localtime(timestamp or time.time()))

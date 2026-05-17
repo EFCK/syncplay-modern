@@ -95,7 +95,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Fullscreen state
         self._is_fullscreen = False
         self._overlay: Optional[QtWidgets.QFrame] = None
-        self._saved_splitter_sizes: list[int] = []
+        self._saved_chat_visible: bool = True
         self._mouse_filter = _MouseEdgeFilter(self)
         self._autohide_timer = QtCore.QTimer(self)
         self._autohide_timer.setSingleShot(True)
@@ -116,16 +116,48 @@ class MainWindow(QtWidgets.QMainWindow):
         right_layout.addWidget(self._user_strip, 0)
         right_layout.addWidget(self._tabs, 1)
 
-        # --- Splitter
-        self._splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        self._splitter.addWidget(self.videoWidget)
-        self._splitter.addWidget(self._right_container)
-        self._splitter.setStretchFactor(0, 3)
-        self._splitter.setStretchFactor(1, 1)
-        self._splitter.setSizes([700, 320])
-        self._splitter.splitterMoved.connect(self._on_splitter_moved)
+        # --- Main horizontal layout: video | toggle | chat at fixed 80/20.
+        # Dragging an QSplitter over libvlc's native window was racy
+        # (resize storm during the drag confused the X surface and the
+        # control bar overlay flickered), so the split is now a fixed
+        # ratio and the only knob is "chat visible / hidden", driven by
+        # a thin clickable strip between the two panes.
+        self._chat_visible = True
+        self._chat_toggle = QtWidgets.QToolButton(self)
+        self._chat_toggle.setText("❯")  # heavy right-pointing angle
+        self._chat_toggle.setFixedSize(22, 22)  # square; vertically centered in its slot
+        self._chat_toggle.setCursor(QtCore.Qt.PointingHandCursor)
+        self._chat_toggle.setToolTip("Hide chat")
+        self._chat_toggle.setFocusPolicy(QtCore.Qt.NoFocus)
+        self._chat_toggle.setStyleSheet(
+            "QToolButton { background: transparent; color: #ccc; "
+            "border: none; font-size: 14px; font-weight: bold; padding: 0; }"
+            "QToolButton:hover { background: rgba(255, 255, 255, 30); "
+            "color: #fff; border-radius: 3px; }"
+            "QToolButton:pressed { background: rgba(0, 0, 0, 80); }"
+        )
+        self._chat_toggle.clicked.connect(self._toggle_chat_panel)
 
-        self.setCentralWidget(self._splitter)
+        main = QtWidgets.QWidget()
+        # Black background on the wrapper: videoWidget has
+        # WA_OpaquePaintEvent + an empty paintEvent (otherwise Qt would
+        # repaint over libvlc), so when the chat is hidden the newly
+        # uncovered region of the X window has no fresh paint and shows
+        # stale chat pixels until libvlc's next frame. A black-filled
+        # wrapper means the fall-through area is at least black.
+        main.setAutoFillBackground(True)
+        pal = main.palette()
+        pal.setColor(QtGui.QPalette.Window, QtGui.QColor(0, 0, 0))
+        main.setPalette(pal)
+        self._main_layout = QtWidgets.QHBoxLayout(main)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_layout.setSpacing(0)
+        self._main_layout.addWidget(self.videoWidget, 4)
+        self._main_layout.addWidget(self._chat_toggle, 0, QtCore.Qt.AlignVCenter)
+        self._main_layout.addWidget(self._right_container, 1)
+        self._main_wrapper = main
+
+        self.setCentralWidget(main)
 
         # --- Menu bar
         self._build_menu()
@@ -279,20 +311,22 @@ class MainWindow(QtWidgets.QMainWindow):
         return
 
     def userListChange(self):
+        # Upstream's userlist stores users flat in `_users` and doesn't keep
+        # a per-room dict — that has to be rebuilt from scratch. Delegating
+        # to client.showUserList() routes through userlist.showUserList(),
+        # which builds the rooms dict and calls back into our
+        # showUserList(currentUser, rooms). Without this, the post-toggle
+        # echo-back never refreshes the Room snapshot and the Ready button
+        # label never flips.
         client = self._client
         if client is None:
             return
-        ul = getattr(client, "userlist", None)
-        if ul is None:
-            return
-        currentUser = getattr(ul, "currentUser", None)
-        rooms_attr = getattr(ul, "_rooms", None) or getattr(ul, "rooms", None)
-        if currentUser is None or rooms_attr is None:
-            return
         try:
-            self.showUserList(currentUser, rooms_attr)
+            client.showUserList()
         except Exception:
-            return
+            if getattr(constants, "DEBUG_MODE", False):
+                import traceback
+                traceback.print_exc()
 
     def markEndOfUserlist(self):
         return
@@ -730,8 +764,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._is_fullscreen = True
 
-        # Save state and hide normal chrome
-        self._saved_splitter_sizes = self._splitter.sizes()
+        # Remember whether the chat was visible so we can restore it on
+        # exit; the toggle strip is also hidden while fullscreen.
+        self._saved_chat_visible = self._chat_visible
+        self._chat_toggle.setVisible(False)
         self.menuBar().setVisible(False)
         self.statusBar().setVisible(False)
 
@@ -747,13 +783,13 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(self._overlay)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        # Reparent the chat sidebar out of the main layout into the overlay;
+        # video now naturally fills the freed space (only stretching item).
+        self._main_layout.removeWidget(self._right_container)
         self._right_container.setParent(self._overlay)
+        self._right_container.setVisible(True)
         layout.addWidget(self._right_container)
         self._overlay.hide()
-
-        # Let the video take the whole window.
-        total = self._splitter.width() or self.width()
-        self._splitter.setSizes([total, 0])
 
         self.showFullScreen()
         self._fs_reposition_overlay()
@@ -782,13 +818,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self._autohide_timer.stop()
         QtWidgets.QApplication.instance().removeEventFilter(self._mouse_filter)
 
-        # Reparent the chat sidebar back into the splitter.
+        # Reparent the chat sidebar back into the main HBox at index 2
+        # (after video + toggle strip) and restore the pre-fullscreen
+        # show/hide state.
         overlay = self._overlay
         self._overlay = None
         self._right_container.setParent(None)
-        self._splitter.insertWidget(1, self._right_container)
-        if self._saved_splitter_sizes:
-            self._splitter.setSizes(self._saved_splitter_sizes)
+        self._main_layout.insertWidget(2, self._right_container, 1)
+        self._chat_toggle.setVisible(True)
+        self._chat_visible = self._saved_chat_visible
+        self._right_container.setVisible(self._chat_visible)
+        self._chat_toggle.setText("❯" if self._chat_visible else "❮")
+        self._chat_toggle.setToolTip(
+            "Hide chat" if self._chat_visible else "Show chat"
+        )
 
         self.menuBar().setVisible(True)
         self.statusBar().setVisible(True)
@@ -851,7 +894,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fs_reposition_overlay()
         self._vc_reposition_if_visible()
 
-    def _on_splitter_moved(self, *_args) -> None:
+    def _toggle_chat_panel(self) -> None:
+        if self._is_fullscreen:
+            return  # fullscreen has its own auto-hide overlay
+        self._chat_visible = not self._chat_visible
+        self._right_container.setVisible(self._chat_visible)
+        self._chat_toggle.setText("❯" if self._chat_visible else "❮")
+        self._chat_toggle.setToolTip(
+            "Hide chat" if self._chat_visible else "Show chat"
+        )
+        # Force the HBox to recompute slot sizes immediately — some Qt
+        # styles defer relayout until the next event tick, which leaves a
+        # frame where the chat is invisible but its space hasn't been
+        # given back to the video pane yet.
+        self._main_layout.invalidate()
+        self._main_layout.activate()
+        # libvlc's X surface only redraws on its own frame tick, so the
+        # area the video just grew into would otherwise show stale chat
+        # pixels until the next frame. Ask the video widget to paint
+        # itself black once — libvlc renders over it shortly after.
+        self.videoWidget.request_black_repaint()
+        # Video pane resized — keep the auto-hide control bar aligned.
         self._vc_reposition_if_visible()
 
     def _vc_reposition_if_visible(self) -> None:

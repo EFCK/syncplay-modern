@@ -224,6 +224,15 @@ class EmbeddedVlcPlayer(BasePlayer):
     def openFile(self, filePath: str, resetPosition: bool = False) -> None:
         instance = _get_instance()
         media = instance.media_new(filePath)
+        # `:start-paused` tells libvlc to load and parse the file but keep
+        # playback paused on the first frame. Without this the player
+        # auto-plays the moment a file is dropped in, before the user has
+        # had a chance to ready up — and before the sync state machine has
+        # decided whether playback should actually begin.
+        try:
+            media.add_option(":start-paused")
+        except Exception:
+            pass
         # Parse asynchronously; we listen for MediaParsedChanged to learn
         # duration and audio/subtitle tracks.
         try:
@@ -243,8 +252,9 @@ class EmbeddedVlcPlayer(BasePlayer):
             self._video_widget.attach_player(self._player)
             self._video_widget.clear_placeholder()
 
-        # Begin playback so the demuxer engages and the renderer attaches.
-        # Sync state machine will pause us almost immediately if appropriate.
+        # `play()` is still required so libvlc engages the demuxer and the
+        # renderer attaches to our X window — without it the video surface
+        # stays black. `:start-paused` above ensures it pauses on frame 1.
         self._player.play()
         if resetPosition:
             self._player.set_time(0)
