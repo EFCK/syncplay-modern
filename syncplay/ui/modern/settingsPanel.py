@@ -510,8 +510,37 @@ class PlaybackDialog(QtWidgets.QDialog):
         button_box.accepted.connect(self.accept)
         form.addRow(button_box)
 
-        if fileinfo is not None:
+        # Prefer a live track list from the running player over the
+        # fileinfo dict — libvlc can renumber tracks between parse
+        # time (when fileinfo was captured) and playback time, so the
+        # cached IDs go stale. The cycle-shortcut path already queries
+        # live; mirror that here so the dropdown selections actually
+        # apply.
+        live_info = self._fetch_live_tracks() if get_player else None
+        if live_info is not None:
+            self.set_fileinfo(live_info)
+        elif fileinfo is not None:
             self.set_fileinfo(fileinfo)
+
+    def _fetch_live_tracks(self) -> Optional[dict]:
+        try:
+            player = self._get_player()
+        except Exception:
+            return None
+        if player is None:
+            return None
+        info: dict = {}
+        if hasattr(player, "get_audio_tracks"):
+            try:
+                info["audio_tracks"] = player.get_audio_tracks()
+            except Exception:
+                pass
+        if hasattr(player, "get_subtitle_tracks"):
+            try:
+                info["subtitle_tracks"] = player.get_subtitle_tracks()
+            except Exception:
+                pass
+        return info or None
 
     # ------------------------------------------------------------------
     # Public hook called by MainWindow when libvlc finishes parsing media
@@ -544,19 +573,34 @@ class PlaybackDialog(QtWidgets.QDialog):
 
     def _on_audio_changed(self, index: int) -> None:
         track_id = self._audio_combo.itemData(index)
+        label = self._audio_combo.itemText(index) or "(unknown)"
         player = self._get_player()
-        if player is not None and track_id is not None and hasattr(player, "set_audio_track"):
-            try:
-                player.set_audio_track(int(track_id))
-            except Exception:
-                pass
+        if player is None or track_id is None or not hasattr(player, "set_audio_track"):
+            return
+        try:
+            player.set_audio_track(int(track_id))
+            self._notify_parent(f"Audio: {label}")
+        except Exception as exc:
+            self._notify_parent(f"Audio change failed: {exc}")
 
     def _on_subtitle_changed(self, index: int) -> None:
         track_id = self._sub_combo.itemData(index)
+        label = self._sub_combo.itemText(index) or "(unknown)"
         player = self._get_player()
-        if player is not None and track_id is not None and hasattr(player, "set_subtitle_track"):
+        if player is None or track_id is None or not hasattr(player, "set_subtitle_track"):
+            return
+        try:
+            player.set_subtitle_track(int(track_id))
+            self._notify_parent(f"Subtitle: {label}")
+        except Exception as exc:
+            self._notify_parent(f"Subtitle change failed: {exc}")
+
+    def _notify_parent(self, text: str) -> None:
+        """Show a brief toast on the MainWindow if available."""
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "_brief_status"):
             try:
-                player.set_subtitle_track(int(track_id))
+                parent._brief_status(text)
             except Exception:
                 pass
 
