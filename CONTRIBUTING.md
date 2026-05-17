@@ -64,11 +64,15 @@ git rebase upstream/master      # or merge, depending on your workflow
 
 ## Tests
 
-Most behaviour is verified with headless QApplication scripts driven by
-`QtTest.QTest`. See the commit messages for the existing phases — each
-has a verification block describing what was exercised. There is no
-formal test suite yet; that's a contribution that would be very
-welcome.
+```bash
+uv pip install -e '.[test]'
+uv run pytest
+```
+
+The suite under `tests/` covers the Qt-free classes (`MessageRouter`,
+`RoomState`). Qt-touching widgets are still verified with the
+per-commit headless QApplication scripts that the existing phase
+commit messages describe.
 
 For protocol-level changes the highest-value test is the two-instance
 smoke test against `syncplay.pl`: spin up two clients in the same room
@@ -102,13 +106,8 @@ copyright header.
 
 - Verified Windows / macOS PyInstaller builds (we ship a spec but
   haven't tested those platforms).
-- A real test suite (pytest) wrapping the headless scripts.
-- A playlist UI (currently `sharedPlaylistEnabled` defaults to False;
-  re-enabling it requires building the panel).
-- A toast widget for in-video notifications when
-  `chatOnVideoEnabled=True` (Phase 4 added the toggle but the rendering
-  half is still a no-op).
-- Wayland-native libvlc output (we force XWayland for v1).
+- Wayland-native libvlc output — investigated 2026-05, deferred. See
+  `docs/superpowers/specs/2026-05-17-wayland-libvlc-spike.md`.
 
 If you tackle any of these, please update the relevant section of
 `docs/superpowers/specs/` so it doesn't drift from the implementation.

@@ -65,16 +65,20 @@ UI for it. Bringing it back means:
 
 ### Wayland-native libvlc output
 
-Currently we force `QT_QPA_PLATFORM=xcb` so we can pass an X window ID
-to libvlc. On native Wayland this is XWayland, which works but is a
-hack. The long-term fix is one of:
+**Status:** deferred — see
+[`docs/superpowers/specs/2026-05-17-wayland-libvlc-spike.md`](../docs/superpowers/specs/2026-05-17-wayland-libvlc-spike.md).
 
-- libvlc's `wl-shm` / `wl-shell` / `gl-wayland` vouts, if a stable
-  Python binding for the Wayland surface handle exists.
-- A texture-handoff approach via `--vout=gl` and a custom Qt OpenGL
-  widget.
-
-This is investigative — neither path is well-trodden.
+A 2026-05 investigation confirmed that libvlc 3.0.21 already ships the
+relevant Wayland renderer modules (`wl_shm`, `wl_shell`, `egl_wl`,
+`gl`, `glconv_vaapi_wl`). The blocker is python-vlc 3.x: it exposes
+only `set_hwnd` / `set_xwindow` / `set_nsobject` for embedding, with
+no `wl_surface` setter. The two viable today-paths are (A) `--vout=gl`
++ `QOpenGLWidget` with `video_set_callbacks` software readback — works
+everywhere but burns VA-API acceleration; (B) wait for libvlc 4's
+`libvlc_video_set_output_callbacks` to land in python-vlc — the
+architecturally correct path, but blocked on external availability.
+For now XWayland continues to work cleanly on every Wayland compositor
+tested (Mutter, Plasma 6, Sway).
 
 ## Long-term / explicit non-goals for v1
 
