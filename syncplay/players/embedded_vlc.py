@@ -545,6 +545,44 @@ class EmbeddedVlcPlayer(BasePlayer):
     def set_subtitle_track(self, track_id: int) -> None:
         self._player.video_set_spu(int(track_id))
 
+    def cycle_audio_track(self) -> str:
+        """Switch to the next audio track. Returns the new track's label."""
+        tracks = self.get_audio_tracks()
+        if not tracks:
+            return ""
+        try:
+            current_id = self._player.audio_get_track()
+        except Exception:
+            current_id = tracks[0]["id"]
+        ids = [t["id"] for t in tracks]
+        try:
+            idx = ids.index(current_id)
+            next_id = ids[(idx + 1) % len(ids)]
+        except ValueError:
+            next_id = ids[0]
+        self._player.audio_set_track(int(next_id))
+        next_track = next(t for t in tracks if t["id"] == next_id)
+        return next_track["label"]
+
+    def cycle_subtitle_track(self) -> str:
+        """Switch to the next subtitle track. Returns the new track's label."""
+        tracks = self.get_subtitle_tracks()
+        if not tracks:
+            return ""
+        try:
+            current_id = self._player.video_get_spu()
+        except Exception:
+            current_id = tracks[0]["id"]
+        ids = [t["id"] for t in tracks]
+        try:
+            idx = ids.index(current_id)
+            next_id = ids[(idx + 1) % len(ids)]
+        except ValueError:
+            next_id = ids[0]
+        self._player.video_set_spu(int(next_id))
+        next_track = next(t for t in tracks if t["id"] == next_id)
+        return next_track["label"]
+
     def set_subtitle_delay_ms(self, delay_ms: int) -> None:
         # python-vlc takes microseconds.
         self._player.video_set_spu_delay(int(delay_ms) * 1000)

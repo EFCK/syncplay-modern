@@ -764,6 +764,9 @@ class MainWindow(QtWidgets.QMainWindow):
         make("L", lambda: self._kb_audio_delay(50))
         make("G", lambda: self._kb_subtitle_delay(-50))
         make("H", lambda: self._kb_subtitle_delay(50))
+        # Track cycling — VLC defaults: B = audio, V = subtitle
+        make("B", self._kb_cycle_audio_track)
+        make("V", self._kb_cycle_subtitle_track)
         # Speed
         make("[", lambda: self._kb_speed(1 / 1.1))
         make("]", lambda: self._kb_speed(1.1))
@@ -839,6 +842,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if player and hasattr(player, "adjust_subtitle_delay_ms"):
             new_ms = player.adjust_subtitle_delay_ms(delta_ms)
             self._brief_status(f"Subtitle delay {new_ms:+d} ms")
+
+    def _kb_cycle_audio_track(self):
+        player = self._player_or_none()
+        if player and hasattr(player, "cycle_audio_track"):
+            label = player.cycle_audio_track()
+            if label:
+                self._brief_status(f"Audio: {label}")
+
+    def _kb_cycle_subtitle_track(self):
+        player = self._player_or_none()
+        if player and hasattr(player, "cycle_subtitle_track"):
+            label = player.cycle_subtitle_track()
+            if label:
+                self._brief_status(f"Subtitle: {label}")
 
     def _kb_speed(self, multiplier: float):
         player = self._player_or_none()

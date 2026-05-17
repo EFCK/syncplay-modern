@@ -137,6 +137,8 @@ it) to activate them.
 | `m`                | Mute toggle                     |
 | `j` / `l`          | Audio delay ±50 ms              |
 | `g` / `h`          | Subtitle delay ±50 ms           |
+| `b`                | Cycle to next audio track       |
+| `v`                | Cycle to next subtitle track    |
 | `[` / `]`          | Playback speed ±10%             |
 | `=`                | Reset speed to 1.0×             |
 
