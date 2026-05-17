@@ -132,12 +132,12 @@ class VideoControls(QtWidgets.QFrame):
         self._mute_btn.clicked.connect(self.muteToggleRequested.emit)
 
         self._volume = _JumpSlider(QtCore.Qt.Horizontal, self)
-        self._volume.setRange(0, 200)
+        # libvlc accepts 0-200, but anything above 100 is software
+        # amplification — saturates around 140 on Windows audio
+        # backends (DirectSound / WASAPI), clips on every platform.
+        # Cap at 100 so every slider position is audibly meaningful.
+        self._volume.setRange(0, 100)
         self._volume.setValue(100)
-        # Tick at 100 marks libvlc's unity-gain reference; 100–200 is
-        # amplification.
-        self._volume.setTickPosition(QtWidgets.QSlider.TicksBelow)
-        self._volume.setTickInterval(100)
         self._volume.setFixedWidth(90)
         self._volume.valueChanged.connect(self._on_volume_changed)
 

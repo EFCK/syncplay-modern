@@ -464,7 +464,12 @@ class EmbeddedVlcPlayer(BasePlayer):
         self.setPosition(new_position)
 
     def set_volume(self, volume: int) -> None:
-        volume = max(0, min(200, int(volume)))
+        # Cap at 100 (unity gain). libvlc technically accepts up to
+        # 200, but software amplification clips audio everywhere and
+        # the Windows audio backends saturate around 140 — so any
+        # value above 100 is either inaudible or distorted. Keep the
+        # keyboard volume-up shortcut from pushing past this cap.
+        volume = max(0, min(100, int(volume)))
         self._player.audio_set_volume(volume)
 
     def get_volume(self) -> int:
