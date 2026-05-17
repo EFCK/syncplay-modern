@@ -217,7 +217,7 @@ class SettingsDialog(QtWidgets.QDialog):
         form.addRow("Autoplay safety", self._autoplay_same_files)
 
         self._shared_playlist = self._make_bool(
-            "sharedPlaylistEnabled", default=False,
+            "sharedPlaylistEnabled", default=True,
             label="Enable shared playlist (room-wide queue)",
         )
         form.addRow("Playlist", self._shared_playlist)

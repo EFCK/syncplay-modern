@@ -28,6 +28,9 @@ from syncplay.ui.modern.events import (
     ConnectionState,
     ConnectionStateKind,
     ErrorEvent,
+    PlaylistAppended,
+    PlaylistChanged,
+    PlaylistIndexChanged,
     RoomSnapshot,
     SyncEvent,
     UserFileChanged,
@@ -36,11 +39,13 @@ from syncplay.ui.modern.events import (
     UserReadyChanged,
 )
 from syncplay.ui.modern.messageRouter import MessageRouter
+from syncplay.ui.modern.queuePanel import QueuePanel
 from syncplay.ui.modern.roomPanel import RoomPanel
 from syncplay.ui.modern.roomState import RoomState
 from syncplay.ui.modern.settingsPanel import PlaybackDialog, SettingsDialog
 from syncplay.ui.modern import theme as theme_mod
 from syncplay.ui.modern.sidebarTabs import SidebarTabs
+from syncplay.ui.modern.toast import Toast
 from syncplay.ui.modern.videoControls import VideoControls
 from syncplay.ui.modern.videoWidget import VideoWidget
 
@@ -118,7 +123,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._room_panel = RoomPanel()
         self._room_panel.readyToggleRequested.connect(self._on_ready_toggle)
         self._errors_panel = ErrorsPanel()
-        self._tabs = SidebarTabs(self._room_panel, self._chat_panel, self._errors_panel)
+        self._queue_panel = QueuePanel()
+        self._queue_panel.addFilesRequested.connect(self._on_queue_add_files)
+        self._queue_panel.indexChangeRequested.connect(self._on_queue_play)
+        self._queue_panel.removeAtIndexRequested.connect(self._on_queue_remove)
+        self._tabs = SidebarTabs(
+            self._room_panel, self._chat_panel, self._queue_panel, self._errors_panel
+        )
 
         self._right_container = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(self._right_container)
@@ -215,6 +226,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._vc_state_timer.setInterval(500)
         self._vc_state_timer.timeout.connect(self._vc_refresh_state)
         self._vc_state_timer.start()
+
+        # --- Toast (in-video corner notifications)
+        # Created last so it floats above VideoControls. embedded_vlc
+        # picks it up via `getattr(window, "_toast", None)`.
+        self._toast = Toast(self)
+        self._toast_reposition()
 
         self.show()
 
@@ -361,13 +378,13 @@ class MainWindow(QtWidgets.QMainWindow):
         return
 
     def addFileToPlaylist(self, item):
-        return
+        self._router.addFileToPlaylist(item)
 
     def setPlaylist(self, newPlaylist, newIndexFilename=None):
-        return
+        self._router.setPlaylist(newPlaylist, newIndexFilename)
 
     def setPlaylistIndexFilename(self, filename):
-        return
+        self._router.setPlaylistIndexFilename(filename)
 
     def fileSwitchFoundFiles(self):
         return
@@ -388,6 +405,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_router_event(self, event) -> None:
         if isinstance(event, ChatMessage):
             self._chat_panel.render_chat(event)
+            self._maybe_toast_chat(event)
         elif isinstance(event, SyncEvent):
             self._chat_panel.render_sync(event)
         elif isinstance(event, ErrorEvent):
@@ -415,6 +433,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"♪ {event.user} loaded {event.filename}",
                 event.timestamp,
             )
+        elif isinstance(event, (PlaylistChanged, PlaylistAppended, PlaylistIndexChanged)):
+            self._queue_panel.on_playlist_event(event)
 
     def _on_connection_state(self, event: ConnectionState) -> None:
         # Was used to drive the status-bar connection dot's colour and
@@ -428,6 +448,85 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if hasattr(self._client, "sendChat"):
             self._client.sendChat(text)
+
+    def _playlist_or_none(self):
+        client = self._client
+        if client is None:
+            return None
+        return getattr(client, "playlist", None)
+
+    def _on_queue_add_files(self, paths: list) -> None:
+        """Queue user-picked files into the room's shared playlist.
+
+        Two-step per file: openFile() to register the absolute path
+        with the client (so fileSwitch.findFilepath() can later resolve
+        the basename back to a real path), then playlist.addToPlaylist()
+        with the BASENAME — upstream's playlist convention is
+        basename-only so the same playlist works across users with the
+        file at different paths. Without the openFile step, the
+        immediate `switchToNewPlaylistIndex` triggered inside
+        `addToPlaylist` fails with "Could not find file ... in media
+        directories for playlist switch" because the file isn't yet
+        known to fileSwitch.
+        """
+        if self._client is None:
+            return
+        playlist = self._playlist_or_none()
+        if playlist is None:
+            return
+        import os
+        for path in paths:
+            if not path:
+                continue
+            basename = os.path.basename(path)
+            try:
+                # Register the path. openFile also starts playback —
+                # acceptable here since the user just asked to queue
+                # something, and the just-queued file becomes the new
+                # current item anyway.
+                self._client.openFile(path, fromUser=True)
+            except TypeError:
+                # Older client signature (no fromUser kw).
+                try:
+                    self._client.openFile(path)
+                except Exception:
+                    if getattr(constants, "DEBUG_MODE", False):
+                        import traceback
+                        traceback.print_exc()
+                    continue
+            except Exception:
+                if getattr(constants, "DEBUG_MODE", False):
+                    import traceback
+                    traceback.print_exc()
+                continue
+            try:
+                playlist.addToPlaylist(basename)
+            except Exception:
+                if getattr(constants, "DEBUG_MODE", False):
+                    import traceback
+                    traceback.print_exc()
+
+    def _on_queue_play(self, filename: str) -> None:
+        playlist = self._playlist_or_none()
+        if playlist is None or not filename:
+            return
+        try:
+            playlist.changeToPlaylistIndexFromFilename(filename)
+        except Exception:
+            if getattr(constants, "DEBUG_MODE", False):
+                import traceback
+                traceback.print_exc()
+
+    def _on_queue_remove(self, index: int) -> None:
+        playlist = self._playlist_or_none()
+        if playlist is None or index < 0:
+            return
+        try:
+            playlist.deleteAtIndex(index)
+        except Exception:
+            if getattr(constants, "DEBUG_MODE", False):
+                import traceback
+                traceback.print_exc()
 
     def _on_ready_toggle(self) -> None:
         if self._client is None:
@@ -910,6 +1009,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.showFullScreen()
         self._fs_reposition_overlay()
+        self._toast_reposition()
 
         # Track mouse globally so we can reveal on edge approach even when
         # the cursor is over the video widget.
@@ -1021,6 +1121,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._is_fullscreen:
             self._fs_reposition_overlay()
         self._vc_reposition_if_visible()
+        self._toast_reposition()
 
     def _toggle_chat_panel(self) -> None:
         if self._is_fullscreen:
@@ -1044,6 +1145,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.videoWidget.request_black_repaint()
         # Video pane resized — keep the auto-hide control bar aligned.
         self._vc_reposition_if_visible()
+        self._toast_reposition()
 
     def _vc_reposition_if_visible(self) -> None:
         if getattr(self, "_video_controls", None) is None:
@@ -1056,14 +1158,38 @@ class MainWindow(QtWidgets.QMainWindow):
             self._video_controls.hide()
 
     def _brief_status(self, text: str, duration_ms: int = 1500) -> None:
-        """No-op now that the status bar is gone.
+        toast = getattr(self, "_toast", None)
+        if toast is None:
+            return
+        toast.show_message(text, duration=duration_ms)
+        self._toast_reposition()
 
-        Kept as a stub so the keyboard-shortcut handlers (volume,
-        delay, speed, mute) don't have to be rewritten. If short
-        on-screen feedback is wanted later, swap this to the planned
-        in-video toast widget — the call sites won't need to change.
-        """
-        return
+    def _toast_reposition(self) -> None:
+        toast = getattr(self, "_toast", None)
+        if toast is None:
+            return
+        video_widget = self.videoWidget
+        # Translate the video widget's local rect into MainWindow coords —
+        # Toast is parented to MainWindow so it can float above the native
+        # X surface (a child of WA_NativeWindow gets painted over).
+        top_left = video_widget.mapTo(self, QtCore.QPoint(0, 0))
+        rect = QtCore.QRect(top_left, video_widget.size())
+        toast.reposition(rect)
+
+    def _maybe_toast_chat(self, event: ChatMessage) -> None:
+        # Respect the chatOnVideoEnabled setting (default False, INI-persisted).
+        # Suppress self-echoes — the user just typed the line, they don't
+        # need a corner toast of their own message.
+        if event.is_self:
+            return
+        cfg = getattr(self._client, "_config", None) if self._client else None
+        if not cfg or not cfg.get("chatOnVideoEnabled"):
+            return
+        toast = getattr(self, "_toast", None)
+        if toast is None:
+            return
+        toast.show_message(f"{event.user}: {event.text}", duration=4000)
+        self._toast_reposition()
 
     def _open_settings(self) -> None:
         if self._client is None:

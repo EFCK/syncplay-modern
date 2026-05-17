@@ -21,6 +21,9 @@ from syncplay.ui.modern.events import (
     ConnectionStateKind,
     ErrorEvent,
     ErrorSeverity,
+    PlaylistAppended,
+    PlaylistChanged,
+    PlaylistIndexChanged,
     SyncEvent,
     SyncEventKind,
 )
@@ -188,13 +191,20 @@ class MessageRouter:
         return
 
     def addFileToPlaylist(self, item) -> None:
-        return
+        self._emit(PlaylistAppended(filename=str(item), timestamp=time.time()))
 
     def setPlaylist(self, newPlaylist, newIndexFilename=None) -> None:
-        return
+        files = list(newPlaylist) if newPlaylist else []
+        self._emit(
+            PlaylistChanged(
+                files=files,
+                current_filename=newIndexFilename,
+                timestamp=time.time(),
+            )
+        )
 
     def setPlaylistIndexFilename(self, filename) -> None:
-        return
+        self._emit(PlaylistIndexChanged(filename=filename, timestamp=time.time()))
 
     def fileSwitchFoundFiles(self) -> None:
         return

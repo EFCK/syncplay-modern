@@ -1,4 +1,4 @@
-"""Tab strip cycling Room / Chat / Errors with an unread badge on Errors."""
+"""Tab strip cycling Room / Chat / Queue / Errors with an unread badge on Errors."""
 
 from __future__ import annotations
 
@@ -9,14 +9,22 @@ class SidebarTabs(QtWidgets.QTabWidget):
 
     ROOM_INDEX = 0
     CHAT_INDEX = 1
-    ERRORS_INDEX = 2
+    QUEUE_INDEX = 2
+    ERRORS_INDEX = 3
 
-    def __init__(self, room_panel: QtWidgets.QWidget, chat_panel: QtWidgets.QWidget,
-                 errors_panel: QtWidgets.QWidget, parent=None) -> None:
+    def __init__(
+        self,
+        room_panel: QtWidgets.QWidget,
+        chat_panel: QtWidgets.QWidget,
+        queue_panel: QtWidgets.QWidget,
+        errors_panel: QtWidgets.QWidget,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._unread = 0
         self.addTab(room_panel, "Room")
         self.addTab(chat_panel, "Chat")
+        self.addTab(queue_panel, "Queue")
         self.addTab(errors_panel, "Errors")
         self.currentChanged.connect(self._on_changed)
         self._refresh_errors_label()

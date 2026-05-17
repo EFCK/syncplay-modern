@@ -115,6 +115,25 @@ class UserFileChanged:
 
 
 @dataclass
+class PlaylistChanged:
+    files: list = field(default_factory=list)
+    current_filename: Optional[str] = None
+    timestamp: float = 0.0
+
+
+@dataclass
+class PlaylistAppended:
+    filename: str = ""
+    timestamp: float = 0.0
+
+
+@dataclass
+class PlaylistIndexChanged:
+    filename: Optional[str] = None
+    timestamp: float = 0.0
+
+
+@dataclass
 class RoomSnapshot:
     """Whole-room state after a userlist change.
 
