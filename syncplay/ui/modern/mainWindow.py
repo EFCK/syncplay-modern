@@ -1038,6 +1038,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._is_fullscreen = True
 
+        # Snapshot the chat scroll position before the reparent — Qt's
+        # QTextBrowser resets its scrollbar to 0 when the widget is
+        # removed from its parent layout, so we capture-and-restore.
+        chat_scroll = self._chat_panel.scroll_state()
+
         # Remember whether the chat was visible so we can restore it on
         # exit; the toggle strip is also hidden while fullscreen.
         self._saved_chat_visible = self._chat_visible
@@ -1087,6 +1092,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.showFullScreen()
         self._fs_reposition_overlay()
         self._toast_reposition()
+        # Defer to next event tick so the QTextBrowser has been laid
+        # out in its new parent; otherwise scrollbar.maximum() lags.
+        QtCore.QTimer.singleShot(
+            0, lambda: self._chat_panel.restore_scroll(chat_scroll)
+        )
 
         # Track mouse globally so we can reveal on edge approach even when
         # the cursor is over the video widget.
@@ -1114,6 +1124,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._is_fullscreen = False
         self._autohide_timer.stop()
         QtWidgets.QApplication.instance().removeEventFilter(self._mouse_filter)
+
+        # Snapshot the chat scroll position before reparenting — see
+        # _fs_enter for why this is needed.
+        chat_scroll = self._chat_panel.scroll_state()
 
         # Reparent the chat sidebar back into the main HBox at index 2
         # (after video + toggle strip) and restore the pre-fullscreen
@@ -1145,6 +1159,13 @@ class MainWindow(QtWidgets.QMainWindow):
             overlay.deleteLater()
 
         self._vc_refresh_state()
+        # Defer the chat scroll restore — see _fs_enter for the same
+        # pattern. Without it the chat resets to the top when leaving
+        # fullscreen, hiding the most recent messages the user was
+        # reading.
+        QtCore.QTimer.singleShot(
+            0, lambda: self._chat_panel.restore_scroll(chat_scroll)
+        )
 
     def _fs_reposition_overlay(self) -> None:
         if self._overlay is None:

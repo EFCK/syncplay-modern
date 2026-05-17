@@ -69,6 +69,24 @@ class ChatPanel(QtWidgets.QWidget):
 
     # --- Public API --------------------------------------------------------
 
+    def scroll_state(self) -> tuple[int, bool]:
+        """Snapshot the chat log's vertical scroll position.
+
+        Returns (raw_value, at_bottom). The bool flag exists because
+        the scrollbar maximum changes when the widget is re-laid-out
+        (e.g. reparenting in/out of the fullscreen overlay); "they
+        were at the bottom" is a more useful invariant to preserve
+        than a literal pixel offset that may no longer make sense.
+        """
+        sb = self._log.verticalScrollBar()
+        return sb.value(), sb.value() >= sb.maximum() - 2
+
+    def restore_scroll(self, state: tuple[int, bool]) -> None:
+        """Restore a snapshot from `scroll_state()`."""
+        value, at_bottom = state
+        sb = self._log.verticalScrollBar()
+        sb.setValue(sb.maximum() if at_bottom else value)
+
     def render_chat(self, msg: ChatMessage) -> None:
         cls = "bubble-self" if msg.is_self else "bubble-other"
         user = html.escape(msg.user)
