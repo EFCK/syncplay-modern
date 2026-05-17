@@ -49,7 +49,7 @@ class Toast(QtWidgets.QFrame):
             "QFrame#toastStack { background: transparent; }"
             "QLabel.toastLine { "
             "  background: rgba(22, 22, 22, 220); color: #f4f4f4; "
-            "  padding: 6px 12px; border-radius: 6px; font-size: 13px; "
+            "  padding: 10px 16px; border-radius: 8px; font-size: 17px; "
             "}"
         )
         self._layout = QtWidgets.QVBoxLayout(self)
@@ -70,7 +70,7 @@ class Toast(QtWidgets.QFrame):
         label.setProperty("class", "toastLine")
         label.setTextFormat(QtCore.Qt.PlainText)
         label.setWordWrap(True)
-        label.setMaximumWidth(360)
+        label.setMaximumWidth(460)
         label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
         # Stylesheet selector uses `class` property; re-polish so it picks up.
         label.style().unpolish(label)
@@ -94,9 +94,9 @@ class Toast(QtWidgets.QFrame):
     def reposition(self, video_geometry_in_window: QtCore.QRect) -> None:
         """Anchor top-right of the given video-pane rect (in window coords)."""
         inset = 12
-        width = 380
+        width = 500
         # Cap to the video pane width minus insets so we never overflow.
-        width = max(160, min(width, video_geometry_in_window.width() - 2 * inset))
+        width = max(200, min(width, video_geometry_in_window.width() - 2 * inset))
         # Generous height so stacked labels fit; layout aligns top so unused
         # vertical space is just transparent.
         height = max(180, video_geometry_in_window.height() - 2 * inset)
