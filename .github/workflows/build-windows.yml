@@ -14,6 +14,13 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# Opt into Node 24 runtime for JS-based actions ahead of GitHub's
+# 2026-06-02 forced flip. Most pinned actions here still ship Node 20
+# wrappers as of writing; this env makes them run on Node 24 so we can
+# catch any incompatibility now instead of on the deadline.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build:
     runs-on: windows-latest
