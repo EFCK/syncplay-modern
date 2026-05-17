@@ -42,6 +42,7 @@ from syncplay.ui.modern.roomState import RoomState
 from syncplay.ui.modern.settingsPanel import SettingsDialog
 from syncplay.ui.modern.sidebarTabs import SidebarTabs
 from syncplay.ui.modern.userStrip import UserStrip
+from syncplay.ui.modern.videoControls import VideoControls
 from syncplay.ui.modern.videoWidget import VideoWidget
 
 
@@ -122,6 +123,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 1)
         self._splitter.setSizes([700, 320])
+        self._splitter.splitterMoved.connect(self._on_splitter_moved)
 
         self.setCentralWidget(self._splitter)
 
@@ -148,6 +150,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # --- Wiring
         self._chat_panel.chatSubmitted.connect(self._on_chat_submit)
+
+        # --- Video control bar (auto-hiding overlay)
+        self._video_controls = VideoControls(self)
+        self._video_controls.hide()
+        self._video_controls.playPauseRequested.connect(self._kb_toggle_pause)
+        self._video_controls.seekToSecondsRequested.connect(self._on_seek_to_seconds)
+        self._video_controls.volumeChangedTo.connect(self._on_volume_set)
+        self._video_controls.muteToggleRequested.connect(self._kb_mute)
+        self._video_controls.fullscreenToggleRequested.connect(self._kb_toggle_fullscreen)
+
+        self._vc_last_cursor_pos = QtGui.QCursor.pos()
+        self._vc_last_motion_time = time.monotonic()
+        self._vc_poll_timer = QtCore.QTimer(self)
+        self._vc_poll_timer.setInterval(120)
+        self._vc_poll_timer.timeout.connect(self._vc_tick)
+        self._vc_poll_timer.start()
+
+        self._vc_state_timer = QtCore.QTimer(self)
+        self._vc_state_timer.setInterval(500)
+        self._vc_state_timer.timeout.connect(self._vc_refresh_state)
+        self._vc_state_timer.start()
 
         self.show()
 
@@ -486,8 +509,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _kb_toggle_pause(self):
         player = self._player_or_none()
-        if player and hasattr(player, "toggle_pause"):
-            player.toggle_pause()
+        if player is None:
+            return
+        target_paused = not player.is_paused()
+        # Route through SyncplayClient so the canonical state machine
+        # (which manages _lastPlayerUpdate and broadcast timing) sees
+        # this as a user-initiated change. Falling back to the player
+        # directly only when there's no client yet — e.g. a file was
+        # opened before the connection finished.
+        if self._client is not None and hasattr(self._client, "setPaused"):
+            self._client.setPaused(target_paused)
+        else:
+            player.setPaused(target_paused)
 
     def _kb_seek(self, delta_s: float):
         player = self._player_or_none()
@@ -540,6 +573,153 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._is_fullscreen:
             self._fs_exit()
 
+    # --- Video control bar (auto-hide) -----------------------------------
+
+    VC_HIDE_AFTER_S = 2.5      # auto-hide after no cursor motion for this long
+    VC_BAR_HEIGHT = 34         # matches VideoControls.setFixedHeight
+    VC_BAR_MARGIN = 8          # pixels of space below the bar
+    VC_MIN_BAR_WIDTH = 280     # below this the bar is hidden — splitter too narrow
+
+    def _on_seek_to_seconds(self, seconds: float) -> None:
+        player = self._player_or_none()
+        if player and hasattr(player, "setPosition"):
+            player.setPosition(float(seconds))
+
+    def _on_volume_set(self, value: int) -> None:
+        player = self._player_or_none()
+        if player and hasattr(player, "set_volume"):
+            player.set_volume(int(value))
+
+    def _vc_video_geometry_global(self) -> QtCore.QRect:
+        """Return videoWidget's bounding rect in global screen coords."""
+        top_left = self.videoWidget.mapToGlobal(QtCore.QPoint(0, 0))
+        size = self.videoWidget.size()
+        return QtCore.QRect(top_left, size)
+
+    def _vc_position_bar(self) -> bool:
+        """Position the bar inside the video area. Return False (and
+        leave the bar untouched) if the area is too narrow to host it.
+        """
+        video_rect = self._vc_video_geometry_global()
+        win_top_left = self.mapFromGlobal(video_rect.topLeft())
+        width = video_rect.width() - 2 * self.VC_BAR_MARGIN
+        if width < self.VC_MIN_BAR_WIDTH:
+            return False
+        x = win_top_left.x() + self.VC_BAR_MARGIN
+        y = win_top_left.y() + video_rect.height() - self.VC_BAR_HEIGHT - self.VC_BAR_MARGIN
+        self._video_controls.setGeometry(x, y, width, self.VC_BAR_HEIGHT)
+        return True
+
+    def _vc_cursor_over_video_or_bar(self) -> bool:
+        pos = QtGui.QCursor.pos()
+        if self._video_controls.isVisible():
+            bar_rect = QtCore.QRect(
+                self._video_controls.mapToGlobal(QtCore.QPoint(0, 0)),
+                self._video_controls.size(),
+            )
+            if bar_rect.contains(pos):
+                return True
+        return self._vc_video_geometry_global().contains(pos)
+
+    def _vc_show_bar(self) -> None:
+        if not self._client_has_media():
+            return
+        if not self._vc_position_bar():
+            # Video pane too narrow to host the bar — make sure it's
+            # not lingering on screen from a previous wider layout.
+            if self._video_controls.isVisible():
+                self._video_controls.hide()
+            return
+        if not self._video_controls.isVisible():
+            # Sync to the player before the bar appears so the user
+            # doesn't see a half-second of default state (volume 100,
+            # time 0:00, etc.).
+            self._vc_refresh_state()
+            self._video_controls.show()
+            self._video_controls.raise_()
+
+    def _vc_hide_bar(self) -> None:
+        if self._video_controls.isVisible():
+            self._video_controls.hide()
+
+    def _client_has_media(self) -> bool:
+        player = self._player_or_none()
+        if player is None or not hasattr(player, "length_seconds"):
+            return False
+        return player.length_seconds() > 0
+
+    def _vc_tick(self) -> None:
+        """Cursor-polling tick — show/hide the bar based on activity."""
+        if not self._client_has_media():
+            if self._video_controls.isVisible():
+                self._video_controls.hide()
+            return
+
+        now = time.monotonic()
+        pos = QtGui.QCursor.pos()
+        if pos != self._vc_last_cursor_pos:
+            self._vc_last_cursor_pos = pos
+            # Only count motion that's actually over the video or bar
+            # as "user activity" — otherwise the bar stays visible
+            # indefinitely whenever the user moves their mouse over
+            # the sidebar or another window.
+            if self._vc_cursor_over_video_or_bar():
+                self._vc_last_motion_time = now
+                self._vc_show_bar()
+                return
+            # Motion elsewhere — fall through to the hide-check.
+
+        if not self._video_controls.isVisible():
+            return
+
+        # Keep visible while cursor sits over the bar itself.
+        bar_rect = QtCore.QRect(
+            self._video_controls.mapToGlobal(QtCore.QPoint(0, 0)),
+            self._video_controls.size(),
+        )
+        if bar_rect.contains(pos):
+            self._vc_last_motion_time = now
+            return
+
+        # Keep visible while paused — VLC does the same.
+        player = self._player_or_none()
+        if player is not None and hasattr(player, "is_paused"):
+            try:
+                if player.is_paused():
+                    return
+            except Exception:
+                pass
+
+        if now - self._vc_last_motion_time > self.VC_HIDE_AFTER_S:
+            self._vc_hide_bar()
+
+    def _vc_refresh_state(self) -> None:
+        player = self._player_or_none()
+        if player is None:
+            return
+        # No media yet → don't pump zeros into the bar.
+        if not self._client_has_media():
+            return
+        try:
+            length_s = player.length_seconds()
+            position_s = player.position_seconds()
+            is_paused = player.is_paused()
+            is_ended = player.is_ended() if hasattr(player, "is_ended") else False
+            volume = player.get_volume()
+            is_muted = player.is_muted()
+        except Exception:
+            return
+        self._video_controls.update_state(
+            # State.Ended counts as "not playing" so the bar shows ▶,
+            # not ⏸, when the file finished.
+            is_playing=not (is_paused or is_ended),
+            position_s=position_s,
+            duration_s=length_s,
+            volume=int(volume),
+            is_muted=bool(is_muted),
+            is_fullscreen=self._is_fullscreen,
+        )
+
     # --- Fullscreen + chat overlay ---------------------------------------
 
     OVERLAY_EDGE_PX = 40        # mouse-X within this many px of right edge → reveal
@@ -591,6 +771,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 autohide = 3000
         self._autohide_timer.setInterval(max(500, autohide))
 
+        # Reflect the new fullscreen state on the bar's button icon
+        # without waiting for the 500 ms refresh tick.
+        self._vc_refresh_state()
+
     def _fs_exit(self) -> None:
         if not self._is_fullscreen:
             return
@@ -614,6 +798,8 @@ class MainWindow(QtWidgets.QMainWindow):
             overlay.setParent(None)
             overlay.deleteLater()
 
+        self._vc_refresh_state()
+
     def _fs_reposition_overlay(self) -> None:
         if self._overlay is None:
             return
@@ -627,6 +813,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fs_reposition_overlay()
             self._overlay.show()
             self._overlay.raise_()
+            # Keep the video bar above the chat overlay where they
+            # overlap (bottom-right). Otherwise the chat panel covers
+            # the rightmost controls (mute, volume, fullscreen).
+            if self._video_controls.isVisible():
+                self._video_controls.raise_()
         self._autohide_timer.start()
 
     def _fs_hide_overlay(self) -> None:
@@ -658,6 +849,20 @@ class MainWindow(QtWidgets.QMainWindow):
         super().resizeEvent(event)
         if self._is_fullscreen:
             self._fs_reposition_overlay()
+        self._vc_reposition_if_visible()
+
+    def _on_splitter_moved(self, *_args) -> None:
+        self._vc_reposition_if_visible()
+
+    def _vc_reposition_if_visible(self) -> None:
+        if getattr(self, "_video_controls", None) is None:
+            return
+        if not self._video_controls.isVisible():
+            return
+        if not self._vc_position_bar():
+            # Video pane shrank below the minimum — hide instead of
+            # leaving the bar at a stale (overflowing) geometry.
+            self._video_controls.hide()
 
     def _brief_status(self, text: str, duration_ms: int = 1500) -> None:
         """Quick non-modal feedback in the status bar."""

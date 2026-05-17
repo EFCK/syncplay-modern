@@ -9,6 +9,14 @@ os.environ.setdefault("QT_PREFERRED_BINDING", "PySide6")
 if os.environ.get("XDG_SESSION_TYPE") == "wayland":
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
+# Set the desktop file name before QApplication construction so Qt's
+# platform plugin uses it at the first D-Bus contact with
+# xdg-desktop-portal. Calling QGuiApplication.setDesktopFileName()
+# *after* construction produces a redundant RegisterApplication call
+# that the portal rejects with "Connection already associated with an
+# application ID" (harmless but noisy).
+os.environ.setdefault("QT_QPA_DESKTOP_FILE_NAME", "syncplay")
+
 GraphicalUI = None
 if not isWindowsConsole():
     try:

@@ -126,6 +126,25 @@ class MessageRouter:
 
     def showErrorMessage(self, message: str, criticalerror: bool = False) -> None:
         severity = ErrorSeverity.CRITICAL if criticalerror else ErrorSeverity.ERROR
+        lower = message.lower()
+        # Disconnect detection runs regardless of swallow — the status
+        # dot must still reflect a lost connection even if the textual
+        # error is suppressed. Match only the specific upstream phrasings;
+        # a bare "disconnect" substring would flip the dot on any error
+        # text that happens to mention disconnection.
+        if (
+            "connection with server lost" in lower
+            or "disconnection" in lower
+            or "connection failed" in lower
+        ):
+            self._emit(ConnectionState(state=ConnectionStateKind.DISCONNECTED, detail=message))
+
+        # Suppress advisories that point at a "Set Media Directories"
+        # menu we don't expose in this UI fork. Non-critical only — a
+        # genuinely critical error always reaches the Errors panel.
+        if not criticalerror and "set media directories" in lower:
+            return
+
         self._emit(
             ErrorEvent(
                 severity=severity,
@@ -134,14 +153,6 @@ class MessageRouter:
                 timestamp=time.time(),
             )
         )
-        lower = message.lower()
-        if (
-            "connection with server lost" in lower
-            or "disconnection" in lower
-            or "connection failed" in lower
-            or "disconnect" in lower
-        ):
-            self._emit(ConnectionState(state=ConnectionStateKind.DISCONNECTED, detail=message))
 
     def showDebugMessage(self, message: str) -> None:
         return

@@ -97,6 +97,13 @@ def _get_instance():
         "--quiet",
         "--no-video-title-show",
         "--no-osd",             # we render our own toasts
+        # Keep libvlc's mouse handling enabled so its built-in overlay
+        # (play / pause / fullscreen buttons, seek bar) renders and is
+        # clickable. Disable only the keyboard grab so Qt owns letter
+        # shortcuts (Space, F, K, etc.) — without this libvlc would
+        # consume them on its X11 subwindow and our QShortcuts would
+        # never fire.
+        "--no-keyboard-events",
     ]
     try:
         instance = vlc.Instance(preferred_args)
@@ -372,6 +379,18 @@ class EmbeddedVlcPlayer(BasePlayer):
 
     def position_seconds(self) -> float:
         return max(0.0, (self._player.get_time() or 0) / 1000.0)
+
+    def length_seconds(self) -> float:
+        try:
+            return max(0.0, (self._player.get_length() or 0) / 1000.0)
+        except Exception:
+            return 0.0
+
+    def is_ended(self) -> bool:
+        try:
+            return self._player.get_state() == self._vlc.State.Ended
+        except Exception:
+            return False
 
     def seek_by_seconds(self, delta_s: float) -> None:
         new_position = max(0.0, self.position_seconds() + delta_s)

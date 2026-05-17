@@ -577,7 +577,9 @@ class ConfigurationGetter(object):
                     raise ImportError("Failed to identify compatible version of PySide.")
                 if QCoreApplication.instance() is None:
                     self.app = QtWidgets.QApplication(sys.argv)
-                    self.app.setDesktopFileName("syncplay")
+                    # Desktop file name is set via QT_QPA_DESKTOP_FILE_NAME
+                    # in syncplay/ui/__init__.py, before QApplication is
+                    # constructed — avoids a portal-registration warning.
                     if isWindows():
                         try:
                             from syncplay.vendor import darkdetect
