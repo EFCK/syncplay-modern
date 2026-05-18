@@ -215,6 +215,137 @@ def test_get_local_state_uses_player_paused_in_steady_state():
 
 
 # ---------------------------------------------------------------------------
+# End-to-end regression: handleState's sub-handlers must not poison the
+# echo invariant. The earlier stub-only tests can't catch this because
+# they don't run _changePlayerStateAccordingToGlobalState — yet that's
+# exactly where the bug lives in practice. _serverPaused calls
+# setPosition, which bumps _lastPlayerUpdate to now, which (without the
+# re-anchor at the end of _changePlayerStateAccordingToGlobalState)
+# would defeat the getLocalState echo branch and let the watcher echo
+# its stale _playerPaused=False back at the server.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingPlayer:
+    """Minimal BasePlayer surface."""
+
+    def __init__(self):
+        self.paused_calls = []
+        self.position_calls = []
+        self.speedSupported = False
+
+    def setPaused(self, paused):
+        self.paused_calls.append(paused)
+
+    def setPosition(self, position):
+        self.position_calls.append(position)
+
+
+class _SilentUi:
+    def showMessage(self, *a, **kw): pass
+    def showErrorMessage(self, *a, **kw): pass
+    def showDebugMessage(self, *a, **kw): pass
+
+
+class _FakeUser:
+    def __init__(self, username, ready=True, file_=None):
+        self.username = username
+        self.ready = ready
+        self.file = file_ or {"name": "movie.mkv", "duration": 1000.0, "size": 1, "path": "/movie.mkv"}
+
+    def isReady(self): return self.ready
+    def canControl(self): return True
+
+
+class _FakeUserlist:
+    def __init__(self, current_user):
+        self.currentUser = current_user
+
+
+def _make_full_client(*, player_paused, global_paused, player_position=100.0, global_position=100.0):
+    """A SyncplayClient instance with enough state to exercise
+    _changePlayerStateAccordingToGlobalState end-to-end.
+    """
+    from syncplay.client import SyncplayClient
+
+    client = SyncplayClient.__new__(SyncplayClient)
+    client.userlist = _FakeUserlist(_FakeUser("me"))
+    client._player = _RecordingPlayer()
+    client.ui = _SilentUi()
+    client._protocol = None
+
+    now = time.time()
+    # Steady-state-ish: askPlayer fresher than the last global update,
+    # which is the worst case for the echo guard (and the typical case
+    # outside the brief post-handleState window).
+    client._lastPlayerUpdate = now - 0.05
+    client._lastGlobalUpdate = now - 0.8
+    client._playerPosition = player_position
+    client._globalPosition = global_position
+    client._playerPaused = player_paused
+    client._globalPaused = global_paused
+    client._userOffset = 0.0
+    client._speedChanged = False
+    client.behindFirstDetected = None
+    client.lastRewindTime = None
+    client.lastAdvanceTime = None
+    client.lastLeftTime = 0
+    client.playerPositionBeforeLastSeek = 0.0
+    client._config = {
+        "dontSlowDownWithMe": False,
+        "rewindThreshold": 9999,
+        "rewindOnDesync": False,
+        "fastforwardOnDesync": False,
+        "slowOnDesync": False,
+    }
+    return client
+
+
+def test_serverPaused_does_not_poison_getLocalState_echo():
+    """Reproduces the ping-pong: peer pauses, _serverPaused fires on
+    us (setBy != self), its internal setPosition bumps
+    _lastPlayerUpdate, and a naive getLocalState then echoes the stale
+    _playerPaused=False back at the server, flipping the room PLAYING
+    with setBy=us. The re-anchor at the end of
+    _changePlayerStateAccordingToGlobalState fixes this.
+    """
+    client = _make_full_client(player_paused=False, global_paused=False)
+
+    # Peer "alice" pauses; we receive the broadcast.
+    client._changePlayerStateAccordingToGlobalState(
+        position=120.0, paused=True, doSeek=False, setBy="alice"
+    )
+
+    # Immediately echo back, as protocols.handleState does.
+    _position, paused, _seeked, _state_change = client.getLocalState()
+
+    assert paused is True, (
+        "Echo must report the just-applied global pause state, not the "
+        "stale _playerPaused=False cache — otherwise the server flips "
+        "the room back PLAYING via Watcher.updateState. Symptom: rapid "
+        "'X paused / Y unpaused' ping-pong in chat."
+    )
+
+
+def test_serverUnpaused_echo_also_substitutes_global():
+    """Symmetric case: peer unpauses; we receive the broadcast.
+    _serverUnpaused doesn't call setPosition (so it doesn't bump
+    _lastPlayerUpdate today), but the same invariant must hold so a
+    future refactor that adds a setPosition call won't reintroduce
+    the bug silently.
+    """
+    client = _make_full_client(player_paused=True, global_paused=True)
+
+    client._changePlayerStateAccordingToGlobalState(
+        position=120.0, paused=False, doSeek=False, setBy="alice"
+    )
+
+    _position, paused, _seeked, _state_change = client.getLocalState()
+
+    assert paused is False
+
+
+# ---------------------------------------------------------------------------
 # Fix 3 — server-side Room.getPosition min-watcher cooldown
 # ---------------------------------------------------------------------------
 

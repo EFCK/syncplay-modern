@@ -473,6 +473,17 @@ class SyncplayClient(object):
             madeChangeOnPlayer = self._serverUnpaused(setBy)
         elif paused == True and pauseChanged:
             madeChangeOnPlayer = self._serverPaused(setBy)
+        # syncplay-modern: the sub-handlers above call setPosition /
+        # _serverSeeked / _serverPaused, several of which bump
+        # _lastPlayerUpdate to time.time() through their internal
+        # setPosition call. That defeats the getLocalState echo guard
+        # (_lastPlayerUpdate < _lastGlobalUpdate), which then echoes
+        # the stale _playerPaused cache and lets the server flip the
+        # room back via Watcher.updateState — the pause-echo bug.
+        # Re-anchor _lastGlobalUpdate AFTER the sub-handlers run so it
+        # stays the fresher timestamp.
+        self._lastGlobalUpdate = time.time()
+        # end syncplay-modern
         return madeChangeOnPlayer
 
     def _executePlaystateHooks(self, position, paused, doSeek, setBy, messageAge):
