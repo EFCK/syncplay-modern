@@ -1,0 +1,61 @@
+name: Tests
+
+# Runs the pytest suite on every push to master and on every PR.
+# Headless: QT_QPA_PLATFORM=offscreen so widget tests don't need a
+# display, and libvlc is installed via apt so the embedded_vlc module
+# can import even though no test currently exercises it end-to-end.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# Default permissions are read-only, which is enough for pytest. We
+# don't need to publish artifacts or write back to the repo.
+permissions:
+  contents: read
+
+# Opt into Node 24 runtime for JS-based actions ahead of GitHub's
+# 2026-06-02 forced flip — same as build-windows.yml.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  QT_QPA_PLATFORM: offscreen
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system libs
+        # libvlc is needed at import time even for headless tests
+        # because syncplay.players.embedded_vlc loads it eagerly when
+        # the package is imported. libxcb-cursor0 is required by the
+        # xcb Qt platform plugin that ui/__init__.py forces on Linux —
+        # pytest-qt uses offscreen so we don't strictly need it here,
+        # but installing it keeps the env close to what users see.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            vlc libxcb-cursor0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[test]"
+
+      - name: Run pytest
+        run: uv run pytest -v
