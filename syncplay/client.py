@@ -238,15 +238,13 @@ class SyncplayClient(object):
             and abs(position - currentLength) < constants.PLAYLIST_LOAD_NEXT_FILE_TIME_FROM_END_THRESHOLD
         ):
             self.playlist.advancePlaylistCheck()
-        elif pauseChange and "readiness" in self.serverFeatures and self.serverFeatures["readiness"]:
-            if (
-                currentLength == 0 or currentLength == -1 or
-                not (
-                    not self.playlist.notJustChangedPlaylist() and
-                    abs(position - currentLength) < constants.PLAYLIST_LOAD_NEXT_FILE_TIME_FROM_END_THRESHOLD
-                )
-            ):
-                pauseChange = self._toggleReady(pauseChange, paused)
+        # syncplay-modern: Play/Pause is decoupled from Ready. Upstream's
+        # _toggleReady auto-flipped ready when the player's pause state
+        # changed (play -> ready, pause -> not-ready). We never want that
+        # — Ready is an explicit user action via the Room tab toggle.
+        # The pauseChange still flows to the group through sendState
+        # below; only the ready side-effect is suppressed.
+        # Was: pauseChange = self._toggleReady(pauseChange, paused)
 
         if self._lastGlobalUpdate:
             self._lastPlayerUpdate = time.time()
