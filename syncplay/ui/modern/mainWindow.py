@@ -50,6 +50,48 @@ from syncplay.ui.modern.videoControls import VideoControls
 from syncplay.ui.modern.videoWidget import VideoWidget
 
 
+class SeekCoalescer(QtCore.QObject):
+    """Buffer rapid arrow-key seek deltas; flush the accumulated total
+    as one seek after a short settle window.
+
+    Each arrow keypress used to fire its own player.seek_by_seconds(),
+    which (a) made libvlc thrash through ten partial set_time calls if
+    the user held a key, often losing accumulated travel because
+    position_seconds() read stale times mid-flush, and (b) generated a
+    burst of doSeek=True state messages that overwhelmed the sync
+    machinery on every peer. Coalescing client-side trades a barely-
+    perceptible ~200 ms lag for one clean seek per user-intent.
+
+    The settle window restarts on every queued delta — autorepeat
+    bursts naturally coalesce until the user stops pressing.
+    """
+
+    DEFAULT_SETTLE_MS = 200
+
+    def __init__(self, on_flush, parent=None, settle_ms: int = DEFAULT_SETTLE_MS):
+        super().__init__(parent)
+        self._on_flush = on_flush
+        self._pending: float = 0.0
+        self._timer = QtCore.QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(settle_ms)
+        self._timer.timeout.connect(self._flush)
+
+    def queue(self, delta_s: float) -> None:
+        self._pending += float(delta_s)
+        self._timer.start()  # restarts if already running
+
+    def pending_delta(self) -> float:
+        return self._pending
+
+    def _flush(self) -> None:
+        if self._pending == 0:
+            return
+        delta = self._pending
+        self._pending = 0.0
+        self._on_flush(delta)
+
+
 class _MouseEdgeFilter(QtCore.QObject):
     """Application-wide mouse-move filter used while fullscreen.
 
@@ -232,6 +274,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # picks it up via `getattr(window, "_toast", None)`.
         self._toast = Toast(self)
         self._toast_reposition()
+
+        # --- Seek coalescer (see SeekCoalescer docstring)
+        self._seek_coalescer = SeekCoalescer(self._apply_seek_delta, parent=self)
 
         self.show()
 
@@ -828,9 +873,18 @@ class MainWindow(QtWidgets.QMainWindow):
             player.setPaused(target_paused)
 
     def _kb_seek(self, delta_s: float):
+        # Funnelled through SeekCoalescer so a burst of keypresses
+        # (autorepeat, rapid taps) becomes one seek operation instead
+        # of N. See SeekCoalescer docstring.
+        self._seek_coalescer.queue(delta_s)
+
+    def _apply_seek_delta(self, delta_s: float):
         player = self._player_or_none()
-        if player and hasattr(player, "seek_by_seconds"):
-            player.seek_by_seconds(delta_s)
+        if player is None or not hasattr(player, "seek_by_seconds"):
+            return
+        player.seek_by_seconds(delta_s)
+        sign = "+" if delta_s >= 0 else ""
+        self._brief_status(f"Seek {sign}{int(delta_s)}s")
 
     def _kb_volume(self, delta: int):
         player = self._player_or_none()

@@ -24,6 +24,7 @@ from collections import deque
 from typing import Deque
 
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid as _qt_isValid
 
 
 class Toast(QtWidgets.QFrame):
@@ -119,14 +120,29 @@ class Toast(QtWidgets.QFrame):
         self.setGeometry(x, y, width, height)
 
     def _expire(self, label: QtWidgets.QFrame) -> None:
+        # The bubble's C++ side may already be gone — MAX_STACK
+        # eviction calls deleteLater on the oldest bubble, but the
+        # original duration timer for that bubble is still scheduled
+        # and fires here later. list.remove(label) then traverses
+        # _labels and compares `label` (dead) against each remaining
+        # item via __eq__, which touches the dead wrapper and raises
+        # `RuntimeError: Internal C++ object ... already deleted`.
+        # Short-circuit when the C++ side is gone — there's no list
+        # entry to drop anyway (eviction already popleft'd it).
+        if not _qt_isValid(label):
+            return
         try:
             self._labels.remove(label)
-        except ValueError:
-            return  # already removed by stack-cap eviction
+        except (ValueError, RuntimeError):
+            # ValueError: already popleft'd by stack-cap eviction.
+            # RuntimeError: defensive — comparison touched another
+            # half-deleted Qt object mid-iteration.
+            return
         self._remove_label(label)
 
     def _remove_label(self, label: QtWidgets.QFrame) -> None:
-        self._layout.removeWidget(label)
-        label.deleteLater()
-        if not self._labels:
+        if _qt_isValid(label):
+            self._layout.removeWidget(label)
+            label.deleteLater()
+        if not self._labels and _qt_isValid(self):
             self.hide()

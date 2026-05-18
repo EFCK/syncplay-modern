@@ -16,6 +16,7 @@ from PySide6 import QtCore, QtWidgets
 
 from syncplay.ui.modern.chatPanel import ChatPanel
 from syncplay.ui.modern.errorsPanel import ErrorsPanel
+from syncplay.ui.modern.mainWindow import SeekCoalescer
 from syncplay.ui.modern.events import (
     ChatMessage,
     ErrorEvent,
@@ -93,6 +94,53 @@ def test_toast_expire_hides_when_last_label_goes(qtbot):
     # cleaned up. pytest-qt's waitUntil polls the predicate.
     qtbot.waitUntil(lambda: not toast.isVisible(), timeout=2000)
     assert len(toast._labels) == 0
+
+
+def test_toast_expire_survives_dead_qframe(qtbot):
+    """Reproduces the runtime crash seen during rapid arrow-key seeks.
+
+    Each seek-flush emits a `Seek ±Xs` toast. Held arrows produce a
+    burst of toasts; MAX_STACK eviction calls deleteLater on the
+    oldest, but its original duration QTimer.singleShot is still
+    scheduled. When that timer fires later, _expire(label) runs on
+    a bubble whose C++ side has already been destroyed, and
+    `self._labels.remove(label)` raises:
+
+        RuntimeError: libshiboken: Internal C++ object
+        (PySide6.QtWidgets.QFrame) already deleted.
+
+    Reproducing the exact path: the evicted bubble has been popleft'd
+    from _labels already, so list.remove can't find it via identity
+    checks. It then falls back to `==` comparison against each item
+    still in _labels — and that __eq__ call touches the dead
+    wrapper's C++ side, raising RuntimeError.
+    """
+    import shiboken6
+
+    toast = _make_toast(qtbot)
+
+    # The bubble that will be "evicted" — not currently in _labels.
+    evicted = QtWidgets.QFrame(toast)
+
+    # A couple of live bubbles in _labels so list.remove has to
+    # actually iterate and call __eq__ on `evicted` against them.
+    alive_a = QtWidgets.QFrame(toast)
+    alive_b = QtWidgets.QFrame(toast)
+    toast._labels.append(alive_a)
+    toast._labels.append(alive_b)
+
+    # Forcibly destroy the evicted bubble's C++ side.
+    shiboken6.delete(evicted)
+    assert shiboken6.isValid(evicted) is False
+
+    # Must not raise. Pre-fix, list.remove's traversal called __eq__
+    # on the dead `evicted` wrapper and shiboken raised RuntimeError.
+    toast._expire(evicted)
+
+    # The live bubbles must still be there afterwards — _expire on a
+    # stranger doesn't drop unrelated entries.
+    assert alive_a in toast._labels
+    assert alive_b in toast._labels
 
 
 # ---------------------------------------------------------------------------
@@ -294,3 +342,96 @@ def test_room_panel_ready_button_emits_on_click(qtbot):
 
     with qtbot.waitSignal(panel.readyToggleRequested, timeout=500):
         panel._ready_btn.click()
+
+
+# ---------------------------------------------------------------------------
+# SeekCoalescer — debounces rapid arrow-key seeks
+# ---------------------------------------------------------------------------
+
+
+class _SeekRecorder:
+    """on_flush callback that records the deltas it receives."""
+
+    def __init__(self):
+        self.flushes: list[float] = []
+
+    def __call__(self, delta: float) -> None:
+        self.flushes.append(delta)
+
+
+def test_seek_coalescer_buffers_until_settle(qtbot):
+    """A single queued delta is not applied immediately — it waits for
+    the settle window so consecutive presses can accumulate."""
+    rec = _SeekRecorder()
+    coalescer = SeekCoalescer(rec, settle_ms=80)
+    coalescer.queue(5.0)
+    assert rec.flushes == []
+    assert coalescer.pending_delta() == 5.0
+
+    # Wait past the settle window for the QTimer to fire.
+    qtbot.wait(150)
+
+    assert rec.flushes == [5.0]
+    assert coalescer.pending_delta() == 0.0
+
+
+def test_seek_coalescer_collapses_burst_into_one_flush(qtbot):
+    """Ten rapid keypresses should produce one flush with the summed
+    delta — the whole point of the coalescer. Without this, libvlc
+    would get ten partial set_time calls and the sync state machine
+    would see ten doSeek=True broadcasts."""
+    rec = _SeekRecorder()
+    coalescer = SeekCoalescer(rec, settle_ms=80)
+    for _ in range(10):
+        coalescer.queue(5.0)
+    qtbot.wait(150)
+
+    assert rec.flushes == [50.0]
+
+
+def test_seek_coalescer_handles_mixed_signs(qtbot):
+    """Pressing → → ← → → in quick succession should net +15s, not
+    fire five separate seeks."""
+    rec = _SeekRecorder()
+    coalescer = SeekCoalescer(rec, settle_ms=80)
+    for delta in (5.0, 5.0, -5.0, 5.0, 5.0):
+        coalescer.queue(delta)
+    qtbot.wait(150)
+
+    assert rec.flushes == [15.0]
+
+
+def test_seek_coalescer_each_new_press_extends_settle_window(qtbot):
+    """A press that arrives partway through the settle window restarts
+    the timer rather than letting the original window expire — so a
+    held-down arrow doesn't get cut off mid-burst."""
+    rec = _SeekRecorder()
+    coalescer = SeekCoalescer(rec, settle_ms=120)
+
+    coalescer.queue(5.0)
+    qtbot.wait(60)  # still mid-window
+    coalescer.queue(5.0)
+    qtbot.wait(60)  # would have flushed by now had we not extended
+    coalescer.queue(5.0)
+    # Nothing flushed yet — the timer keeps getting restarted.
+    assert rec.flushes == []
+
+    qtbot.wait(200)  # well past the latest start
+
+    assert rec.flushes == [15.0]
+
+
+def test_seek_coalescer_separate_bursts_each_flush(qtbot):
+    """A second burst after the first one has settled produces a
+    second independent flush — coalescing is per-burst, not global."""
+    rec = _SeekRecorder()
+    coalescer = SeekCoalescer(rec, settle_ms=80)
+
+    coalescer.queue(5.0)
+    coalescer.queue(5.0)
+    qtbot.wait(150)
+    assert rec.flushes == [10.0]
+
+    coalescer.queue(-5.0)
+    qtbot.wait(150)
+    assert rec.flushes == [10.0, -5.0]
