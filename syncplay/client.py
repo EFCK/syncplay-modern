@@ -127,6 +127,13 @@ class SyncplayClient(object):
         self._lastGlobalUpdate = None
         self._globalPosition = 0.0
         self._globalPaused = 0.0
+        # syncplay-modern: ready-gated sync. When the local user is not
+        # ready we still mirror _globalPosition/_globalPaused (so the
+        # snap-on-ready in setReady has a target) but suppress every
+        # outbound sendState and never apply inbound state to the
+        # player. File-presence announcements are *not* gated — peers
+        # always learn what someone is loading.
+        # end syncplay-modern
         self._userOffset = 0.0
         self._speedChanged = False
         self.behindFirstDetected = None
@@ -248,13 +255,17 @@ class SyncplayClient(object):
 
         if self._lastGlobalUpdate:
             self._lastPlayerUpdate = time.time()
-            if (pauseChange or seeked) and self._protocol:
+            # syncplay-modern: ready-gated sync — outbound state silence
+            # while not engaged. Local pause/play/seek act on the player
+            # only; the group never sees them.
+            if (pauseChange or seeked) and self._protocol and self._syncEngaged():
                 if self.recentlyRewound() or self._recentlyAdvanced():
                     self._protocol.sendState(self._globalPosition, self.getPlayerPaused(), False, None, True)
                     return
                 if seeked:
                     self.playerPositionBeforeLastSeek = self.getGlobalPosition()
                 self._protocol.sendState(self.getPlayerPosition(), self.getPlayerPaused(), seeked, None, True)
+            # end syncplay-modern
 
     def prepareToChangeToNewPlaylistItemAndRewind(self):
         self.ui.showDebugMessage("Preparing to change to new playlist index and rewind...")
@@ -422,11 +433,19 @@ class SyncplayClient(object):
         madeChangeOnPlayer = False
         pauseChanged = paused != self.getGlobalPaused() or paused != self.getPlayerPaused()
         diff = self.getPlayerPosition() - position
-        if self._lastGlobalUpdate is None:
-            madeChangeOnPlayer = self._initPlayerState(position, paused)
+        firstStateEver = self._lastGlobalUpdate is None
+        # syncplay-modern: always mirror group state so the snap-on-ready
+        # in setReady has a current target. The rest of this method
+        # (seek, rewind, slowdown, pause/unpause) only applies when the
+        # local user is engaged in sync.
         self._globalPaused = paused
         self._globalPosition = position
         self._lastGlobalUpdate = time.time()
+        if not self._syncEngaged():
+            return False
+        # end syncplay-modern
+        if firstStateEver:
+            madeChangeOnPlayer = self._initPlayerState(position, paused)
         if doSeek:
             madeChangeOnPlayer = self._serverSeeked(position, setBy)
         if diff > self._config['rewindThreshold'] and not doSeek and not self._config['rewindOnDesync'] == False:
@@ -522,6 +541,21 @@ class SyncplayClient(object):
         if not self._lastGlobalUpdate:
             return True
         return self._globalPaused
+
+    # syncplay-modern: ready-gated sync
+    def _syncEngaged(self) -> bool:
+        """True iff the local user is participating in group sync.
+
+        When False, outbound state is suppressed and inbound state is
+        not applied to the player (we still mirror _globalPosition for
+        the snap-on-ready transition). isReady() can be None during
+        early connection — treat that as not-engaged.
+        """
+        user = getattr(self.userlist, "currentUser", None)
+        if user is None:
+            return False
+        return user.isReady() is True
+    # end syncplay-modern
 
     def eofReportedByPlayer(self):
         if self.playlist.notJustChangedPlaylist() and self.userlist.currentUser.file:
@@ -721,6 +755,10 @@ class SyncplayClient(object):
     def sendFile(self):
         file_ = self.getSanitizedCurrentUserFile()
         if self._protocol and self._protocol.logged and file_:
+            # syncplay-modern: ready-gated sync covers playback state
+            # (play/pause/seek), not presence. File announcements
+            # always flow so peers can see what someone is loading
+            # even before they ready up.
             self._protocol.sendFileSetting(file_)
 
     def setUsername(self, username):
@@ -839,14 +877,50 @@ class SyncplayClient(object):
         if self._player and self.userlist.currentUser.file:
             if position < 0:
                 position = 0
-                self._protocol.sendState(self.getPlayerPosition(), self.getPlayerPaused(), True, None, True)
+                # syncplay-modern: suppress outbound state when not engaged.
+                if self._protocol and self._syncEngaged():
+                    self._protocol.sendState(self.getPlayerPosition(), self.getPlayerPaused(), True, None, True)
+                # end syncplay-modern
             self._player.setPosition(position)
 
     def setPaused(self, paused):
         if self._player and self.userlist.currentUser.file:
+            # syncplay-modern: ready-gated sync — block ready users
+            # from unpausing while any room member is not ready. Pause
+            # always works (local-only when not engaged). Snap the
+            # player back so the keyboard shortcut doesn't visually
+            # toggle, and surface a toast naming the wait reason.
+            if (
+                not paused
+                and self._syncEngaged()
+                and not self.userlist.areAllUsersInRoomReady()
+            ):
+                self._notifyUnpauseBlocked()
+                self._player.setPaused(True)
+                self._playerPaused = True
+                return
+            # end syncplay-modern
             if self._lastPlayerUpdate and not paused:
                 self._lastPlayerUpdate = time.time()
             self._player.setPaused(paused)
+
+    # syncplay-modern: ready-gated sync
+    def _notifyUnpauseBlocked(self):
+        notReadyCount = self._countNotReadyInRoom()
+        notifier = getattr(self.ui, "showSyncBlockedMessage", None)
+        if notifier is not None:
+            notifier(notReadyCount)
+
+    def _countNotReadyInRoom(self):
+        room = self.userlist.currentUser.room
+        count = 0
+        if not self.userlist.currentUser.isReady():
+            count += 1
+        for user in getattr(self.userlist, "_users", {}).values():
+            if user.room == room and not user.isReady():
+                count += 1
+        return count
+    # end syncplay-modern
 
     def start(self, host, port):
         if self._running:
@@ -1025,17 +1099,16 @@ class SyncplayClient(object):
             return True
         if not self.userlist.currentUser.canControl():
             return False
-
-        unpauseAction = self._config['unpauseAction']
-        if self.userlist.currentUser.isReady() or unpauseAction == constants.UNPAUSE_ALWAYS_MODE:
-            return True
-        elif unpauseAction == constants.UNPAUSE_IFOTHERSREADY_MODE and self.userlist.areAllOtherUsersInRoomReady():
-            return True
-        elif unpauseAction == constants.UNPAUSE_IFMINUSERSREADY_MODE and self.userlist.areAllOtherUsersInRoomReady()\
-                and self.autoPlayThreshold and self.userlist.usersInRoomCount() >= self.autoPlayThreshold:
-            return True
-        else:
-            return False
+        # syncplay-modern: ready-gated sync — strict all-ready rule.
+        # Playback unlocks only when every room member (including
+        # currentUser) is ready. The upstream unpauseAction branches
+        # (UNPAUSE_ALWAYS_MODE, UNPAUSE_IFOTHERSREADY_MODE,
+        # UNPAUSE_IFMINUSERSREADY_MODE) are intentionally dropped.
+        return bool(
+            self.userlist.currentUser.isReady()
+            and self.userlist.areAllUsersInRoomReady()
+        )
+        # end syncplay-modern
 
     def autoplayConditionsMet(self):
         if self.seamlessMusicOveride():
@@ -1096,6 +1169,12 @@ class SyncplayClient(object):
             oldReadyState = False
         self.userlist.setReady(username, isReady)
         self.ui.userListChange()
+        # syncplay-modern: ready-gated sync — snap to group on the
+        # not-ready -> ready transition for the current user.
+        currentUsername = self.userlist.currentUser.username
+        if username == currentUsername and oldReadyState is not True and isReady is True:
+            self._snapToGroupState()
+        # end syncplay-modern
         if oldReadyState != isReady:
             self._warnings.checkReadyStates()
         if setBy:
@@ -1103,6 +1182,38 @@ class SyncplayClient(object):
                 self.ui.showMessage(getMessage("other-set-as-ready-notification").format(username, setBy))
             else:
                 self.ui.showMessage(getMessage("other-set-as-not-ready-notification").format(username, setBy))
+
+    # syncplay-modern: ready-gated sync
+    def _snapToGroupState(self):
+        """Snap the local player to the group's current pause/position.
+
+        No-op when alone in the room: there is no peer defining a group
+        state to snap to, so the user's current playback is the room
+        state. Without this guard, hitting Ready in a one-user room
+        would yank the video back to _globalPosition=0 paused —
+        looking exactly like a broken button.
+        """
+        if self._lastGlobalUpdate is None or self._player is None:
+            return
+        if self.userlist.currentUser.file is None:
+            return
+        if not self._hasPeerInRoom():
+            return
+        position = self.getGlobalPosition()
+        paused = self._globalPaused
+        self._player.setPosition(position)
+        self._player.setPaused(paused)
+        self._playerPosition = position
+        self._playerPaused = paused
+        self._lastPlayerUpdate = time.time()
+
+    def _hasPeerInRoom(self) -> bool:
+        room = self.userlist.currentUser.room
+        for user in getattr(self.userlist, "_users", {}).values():
+            if user.room == room:
+                return True
+        return False
+    # end syncplay-modern
 
     @requireServerFeature("managedRooms")
     def setUserFeatures(self, username, features):

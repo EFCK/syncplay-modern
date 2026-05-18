@@ -34,13 +34,6 @@ _PRIVACY_OPTIONS = [
     ("Don't send at all", constants.PRIVACY_DONTSEND_MODE),
 ]
 
-_UNPAUSE_OPTIONS = [
-    ("Always unpause", constants.UNPAUSE_ALWAYS_MODE),
-    ("Only if all others are ready", constants.UNPAUSE_IFOTHERSREADY_MODE),
-    ("Only if at least N users are ready", constants.UNPAUSE_IFMINUSERSREADY_MODE),
-]
-
-
 class SettingsDialog(QtWidgets.QDialog):
 
     def __init__(
@@ -186,18 +179,14 @@ class SettingsDialog(QtWidgets.QDialog):
         )
         form.addRow("On leave", self._pause_on_leave)
 
-        # Unpause action — combo of three upstream modes.
-        self._unpause_combo = QtWidgets.QComboBox()
-        for label, value in _UNPAUSE_OPTIONS:
-            self._unpause_combo.addItem(label, userData=value)
-        self._select_combo_data(
-            self._unpause_combo,
-            self._config.get("unpauseAction") or constants.UNPAUSE_IFOTHERSREADY_MODE,
+        # syncplay-modern: ready-gated sync replaces the upstream
+        # unpauseAction modes. Playback unlocks only when every user
+        # in the room is ready; the combo is gone.
+        unpause_info = QtWidgets.QLabel(
+            "Playback starts when every user in the room is ready."
         )
-        self._unpause_combo.currentIndexChanged.connect(
-            lambda i: self._persist("unpauseAction", self._unpause_combo.itemData(i))
-        )
-        form.addRow("When I press play", self._unpause_combo)
+        unpause_info.setWordWrap(True)
+        form.addRow("When I press play", unpause_info)
 
         self._autoplay_min_users = QtWidgets.QSpinBox()
         self._autoplay_min_users.setRange(1, 99)

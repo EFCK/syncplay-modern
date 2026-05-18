@@ -58,9 +58,14 @@ not-ready is out.**
 
 ### Not-ready user (standalone)
 
-- Drag/drop a video or `File → Open File…` loads it locally. **No file
-  announcement is sent to the room.** (See "File load while not-ready"
-  below.)
+- Drag/drop a video or `File → Open File…` loads it locally **and is
+  announced to the room**. Peers see "alice loaded X.mkv" even while
+  alice is still not-ready — file presence is informational, not a
+  sync action, and hiding it makes the room feel broken when someone
+  is browsing options. (Revised 2026-05-18: original draft suppressed
+  the announcement; implementation found that this made loaded files
+  invisible to the loader and to peers until ready, which read as a
+  bug.)
 - Play, pause, seek, speed change, audio/subtitle track switches all
   act on the local player only. Nothing reaches the wire.
 - The user does not appear in the all-ready calculation as "ready";
@@ -103,10 +108,11 @@ not-ready is out.**
 - **Last user becomes not-ready while playing:** the group pauses at
   current position (server-driven, since the room is no longer
   all-ready). Other ready members are paused by the standard sync.
-- **File load while not-ready:** the file path/size is **not** sent to
-  the room. This avoids polluting the file-difference detection while
-  the user is just browsing. When the user readies up, the current
-  file is announced.
+- **File load while not-ready:** the file path/size **is** sent to
+  the room immediately. Peers see who loaded what regardless of
+  ready state. The room's "file difference" warning fires as usual
+  if the new file doesn't match the room — that's the desired
+  signal, not noise.
 - **Disconnect while not-ready:** unchanged from today.
 - **Room change:** moving to a new room resets ready to false
   (preserves upstream behavior). The new room's snapshot drives the
@@ -226,40 +232,19 @@ This is the single biggest behavioral change for ready users: hitting
 Play while someone in the room is not-ready does nothing (we surface
 a toast — see UI section).
 
-### File-announcement deferral
+### File announcements always flow
 
-When the user opens a file while not-ready, we want to load it locally
-but **not** announce it to the room. The upstream announce flow is:
+`sendFile` is **not** gated by `_syncEngaged()`. The upstream flow is
+preserved: `openFile` → libvlc parse → `_executeFileUpdate` →
+`self.sendFile()` → `_protocol.sendFileSetting(...)`. Peers see what
+each user is loading regardless of ready state.
 
-`openFile` → libvlc parse → `_executeFileUpdate` (client.py:~530) →
-`self.sendFile()` (client.py:714) → `_protocol.sendFileSetting(...)`.
-
-The intercept is inside `sendFile()` itself:
-
-```python
-def sendFile(self):
-    file_ = self.userlist.currentUser.file
-    if file_ is not None and self._protocol and self._protocol.logged:
-        # syncplay-modern: hold back announcement while not-engaged.
-        if not self._syncEngaged():
-            self._fileAnnouncementHeld = True
-            return
-        self._protocol.sendFileSetting(file_)
-```
-
-On the not-ready → ready transition (in `setReady`), if
-`self._fileAnnouncementHeld` is True, call `self.sendFile()` once and
-clear the flag. The current file dict already lives on
-`self.userlist.currentUser.file`, so no extra state capture is needed
-— just the boolean flag.
-
-`_announceCurrentFileIfNeeded()`:
-
-```python
-if self._fileAnnouncementHeld:
-    self._fileAnnouncementHeld = False
-    self.sendFile()  # now passes the _syncEngaged() check
-```
+The original draft of this spec held the announcement back until
+the not-ready → ready transition. In practice this surfaced as a bug:
+the loader couldn't see their own file in the room panel (the server
+echo never came), peers couldn't see who had loaded what, and the
+"file diff" warning that exists precisely to flag a mismatched file
+load never fired. Reverted 2026-05-18.
 
 ### UI changes
 

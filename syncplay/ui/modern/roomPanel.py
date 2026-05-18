@@ -113,7 +113,9 @@ class RoomPanel(QtWidgets.QWidget):
         # Mirror the same colour choice set_snapshot uses, picked from
         # the current theme's palette so both states stay readable.
         p = theme_mod.palette(self._theme)
-        if self._ready_btn.text() == "I'm not ready":
+        # The label changes to "Not Ready (watch alone)" when the user
+        # is currently ready (i.e. clicking would un-ready them).
+        if self._ready_btn.text().startswith("Not Ready"):
             bg = p["ready"]   # currently ready → green-ish
         else:
             bg = "#555555" if theme_mod.normalize(self._theme) == theme_mod.DARK else "#444444"
@@ -171,10 +173,13 @@ class RoomPanel(QtWidgets.QWidget):
             u.get("is_self") and u.get("filename")
             for u in snap.users
         )
+        # syncplay-modern: ready-gated sync — the label spells out
+        # the consequence so the user knows pressing it changes
+        # whether they're in the group sync, not just a flag.
         if snap.is_ready:
-            self._ready_btn.setText("I'm not ready")
+            self._ready_btn.setText("Not Ready (watch alone)")
         else:
-            self._ready_btn.setText("I'm ready")
+            self._ready_btn.setText("Ready (join sync)")
         self._refresh_ready_button_style()
         self._ready_btn.setEnabled(snap.current_user is not None and self_has_file)
         self._ready_btn.setToolTip(

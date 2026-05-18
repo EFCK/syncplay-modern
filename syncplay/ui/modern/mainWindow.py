@@ -308,6 +308,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def showOSDMessage(self, message, duration=None, OSDType=None, mood=None):
         return  # OSD overlays suppressed — chat panel surfaces equivalents.
 
+    def showSyncBlockedMessage(self, notReadyCount: int) -> None:
+        """Surfaces the ready-gated-sync unpause block as a brief toast.
+
+        Called by the client when a ready user tries to unpause while
+        someone in the room (possibly themselves at the edge of a
+        transition) isn't ready.
+        """
+        count = max(int(notReadyCount), 1)
+        text = "Waiting for {} user{} to ready up".format(
+            count, "" if count == 1 else "s"
+        )
+        self._brief_status(text, duration_ms=2500)
+
     def showErrorMessage(self, message, criticalerror=False):
         self._router.showErrorMessage(message, criticalerror=criticalerror)
         if getattr(constants, "DEBUG_MODE", False):
