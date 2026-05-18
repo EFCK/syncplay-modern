@@ -331,20 +331,25 @@ class SyncplayClient(object):
         return pauseChange
 
     def getLocalState(self):
-        paused = self.getPlayerPaused()
         if self._config['dontSlowDownWithMe']:
             position = self.getGlobalPosition()
+            paused = self.getPlayerPaused()
         elif self._lastGlobalUpdate and (self._lastPlayerUpdate or 0) < self._lastGlobalUpdate:
             # syncplay-modern: a global update just arrived and we
-            # haven't resampled the player yet (libvlc is mid-seek).
-            # Echoing the stale extrapolated player position back at
-            # the server would feed it our pre-seek time, which the
-            # server's min-watcher fallback then uses to roll the room
-            # back. Use the just-applied global position instead; the
-            # next askPlayer tick will return us to the normal path.
+            # haven't resampled the player yet (libvlc is mid-apply).
+            # Echoing the stale player cache back at the server feeds
+            # it our pre-update state, which the server treats as an
+            # intent to revert — rolling position back to the slowest
+            # watcher (the seek-echo bug fixed in b226783) or flipping
+            # pause back via Watcher.updateState (the pause-echo bug,
+            # same RTT ping-pong, different field). Use the just-
+            # applied global state for both fields; the next askPlayer
+            # tick will return us to the normal path.
             position = self.getGlobalPosition()
+            paused = self.getGlobalPaused()
         else:
             position = self.getPlayerPosition()
+            paused = self.getPlayerPaused()
         pauseChange, _ = self._determinePlayerStateChange(paused, position)
         if self._lastGlobalUpdate:
             return position, paused, _, pauseChange

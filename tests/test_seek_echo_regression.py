@@ -1,25 +1,37 @@
-"""Regression tests for the post-seek "video reverts" bug.
+"""Regression tests for the post-seek / post-pause "state reverts" bug.
 
-When user X seeks forward, the symptom was:
-  1. Y's libvlc set_time(T) is async, so Y's cached _playerPosition
-     stays at the pre-seek value for the ~30-120 ms until the next
-     askPlayer tick.
-  2. Y receives X's seek state. protocols.handleState immediately
-     echoes Y's local state back to the server via getLocalState() ->
-     getPlayerPosition(), which extrapolates from the stale
-     _playerPosition. Y reports OLD position.
-  3. Server stores Y's watcher.position = OLD.
-  4. Server's per-watcher 1s timer fires Room.getPosition(); when
-     age > 1, the min-watcher fallback picks Y (OLD < T) and snaps
-     the room back to OLD with setBy=Y.
-  5. The next broadcast tells X "go to OLD"; X rewinds.
+When user X seeks forward or presses play, the symptom was the same:
+the room snapped back to its pre-action state seconds later, with
+the revert attributed to a peer who hadn't touched anything.
 
-The two fixes covered here:
+The mechanism is the same RTT ping-pong in both cases:
+  1. Y's libvlc applies the server's seek/unpause asynchronously
+     (~30-120 ms), so Y's cached _playerPosition / _playerPaused
+     stay at the pre-change values until the next askPlayer tick.
+  2. Y receives the server's state. protocols.handleState
+     immediately echoes Y's local state back via getLocalState(),
+     which reads the stale cache and reports OLD position / OLD
+     paused.
+  3. Server stores Y's stale report.
+  4a. Position case: server's per-watcher 1s timer fires
+      Room.getPosition(); when age > 1, the min-watcher fallback
+      picks Y (OLD < T) and snaps the room back.
+  4b. Pause case: server's Watcher.updateState sees room.isPaused()
+      disagrees with Y's reported paused, flips Room.setPaused with
+      setBy=Y.
+  5. Next broadcast tells everyone "go back"; X's video reverts.
+
+Fixes covered here:
   - Fix 1 (client): SyncplayClient.getLocalState() prefers
-    getGlobalPosition() when _lastGlobalUpdate > _lastPlayerUpdate,
-    so Y echoes the position it just applied, not stale OLD.
+    getGlobalPosition() AND getGlobalPaused() when
+    _lastGlobalUpdate > _lastPlayerUpdate. Y echoes what it just
+    applied, not stale OLD. Same code path covers both position
+    and paused — they were always vulnerable to the same race.
   - Fix 3 (server): Room.setPosition() resets _lastUpdate, so the
     min-watcher fallback can't fire for ~1 s after a real seek.
+    (No analogous server-side fix is needed for paused: the only
+    path that flips Room.setPaused is Watcher.updateState, which
+    is fed by watcher echoes — fixing the echo breaks the loop.)
 """
 
 from __future__ import annotations
@@ -44,15 +56,23 @@ def _make_client_stub(
     player_position: float,
     global_position: float,
     paused: bool,
+    player_paused: bool | None = None,
+    global_paused: bool | None = None,
 ) -> SyncplayClient:
-    """Bypass __init__ and set just the attributes getLocalState needs."""
+    """Bypass __init__ and set just the attributes getLocalState needs.
+
+    ``paused`` is the default for both player and global state when the
+    two agree (the steady-state path). Pass ``player_paused`` /
+    ``global_paused`` explicitly to make them diverge — that's the
+    stale-cache window the pause-echo fix exists for.
+    """
     client = SyncplayClient.__new__(SyncplayClient)
     client._lastPlayerUpdate = last_player_update
     client._lastGlobalUpdate = last_global_update
     client._playerPosition = player_position
     client._globalPosition = global_position
-    client._playerPaused = paused
-    client._globalPaused = paused
+    client._playerPaused = paused if player_paused is None else player_paused
+    client._globalPaused = paused if global_paused is None else global_paused
     client._config = {"dontSlowDownWithMe": False}
     return client
 
@@ -121,6 +141,77 @@ def test_get_local_state_falls_back_to_player_when_no_global_yet():
 
     # Existing contract: no global => (None, None, None, None).
     assert result == (None, None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# Pause-echo fix — same window as the seek fix, applied to `paused`.
+# ---------------------------------------------------------------------------
+
+
+def test_get_local_state_prefers_global_paused_when_global_update_is_fresher():
+    """Right after a server unpause arrives, before askPlayer
+    resamples. _playerPaused cache still holds the pre-unpause value
+    (True) because _serverUnpaused only flipped the player itself, not
+    the cache. Echoing that stale True back at the server makes the
+    Watcher.updateState flip the room PAUSED, attributed to us — the
+    play-then-snap-back symptom.
+    """
+    now = time.time()
+    client = _make_client_stub(
+        last_player_update=now - 0.5,
+        last_global_update=now - 0.001,
+        player_position=100.0,
+        global_position=100.0,
+        paused=True,           # unused when player/global override
+        player_paused=True,    # stale OLD — libvlc hasn't applied
+        global_paused=False,   # the server just told us to play
+    )
+
+    _position, paused, _seeked, _state_change = client.getLocalState()
+
+    assert paused is False  # echo the just-applied state, not stale OLD
+
+
+def test_get_local_state_prefers_global_paused_in_reverse_direction_too():
+    """Symmetric case: server just told us to PAUSE; player cache
+    still says playing. Echoing the stale `False` would flip the
+    room back to PLAYING via the same path."""
+    now = time.time()
+    client = _make_client_stub(
+        last_player_update=now - 0.5,
+        last_global_update=now - 0.001,
+        player_position=100.0,
+        global_position=100.0,
+        paused=False,
+        player_paused=False,
+        global_paused=True,
+    )
+
+    _position, paused, _seeked, _state_change = client.getLocalState()
+
+    assert paused is True
+
+
+def test_get_local_state_uses_player_paused_in_steady_state():
+    """When askPlayer ticks are fresher than the last global update
+    (the typical 100 ms vs 1 s cadence), echo the player's actual
+    cached pause state. Substituting global in steady state would
+    mask real, intentional local pause changes from the server.
+    """
+    now = time.time()
+    client = _make_client_stub(
+        last_player_update=now - 0.05,
+        last_global_update=now - 0.8,
+        player_position=200.0,
+        global_position=198.0,
+        paused=False,
+        player_paused=True,     # local user just hit pause
+        global_paused=False,    # server hasn't heard yet
+    )
+
+    _position, paused, _seeked, _sc = client.getLocalState()
+
+    assert paused is True  # report the real local intent
 
 
 # ---------------------------------------------------------------------------
