@@ -48,14 +48,9 @@ class ConfigurationGetter(object):
             "file": None,
             "playerArgs": [],
             "playerClass": None,
-            # Upstream defaults (1.5 / 4 / 5) are aggressive: small drifts
-            # trigger constant slowdown<->revert flapping and noisy chat.
-            # Raised here so a fresh install tolerates more drift before
-            # the sync algorithm intervenes. Users can still tighten in
-            # Settings → Sync.
-            "slowdownThreshold": 3.0,
-            "rewindThreshold": 8.0,
-            "fastforwardThreshold": 10.0,
+            "slowdownThreshold": constants.DEFAULT_SLOWDOWN_KICKIN_THRESHOLD,
+            "rewindThreshold": constants.DEFAULT_REWIND_THRESHOLD,
+            "fastforwardThreshold": constants.DEFAULT_FASTFORWARD_THRESHOLD,
             "rewindOnDesync": True,
             "slowOnDesync": True,
             "fastforwardOnDesync": True,
