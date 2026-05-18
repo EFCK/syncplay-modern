@@ -325,6 +325,15 @@ class SyncplayClient(object):
         paused = self.getPlayerPaused()
         if self._config['dontSlowDownWithMe']:
             position = self.getGlobalPosition()
+        elif self._lastGlobalUpdate and (self._lastPlayerUpdate or 0) < self._lastGlobalUpdate:
+            # syncplay-modern: a global update just arrived and we
+            # haven't resampled the player yet (libvlc is mid-seek).
+            # Echoing the stale extrapolated player position back at
+            # the server would feed it our pre-seek time, which the
+            # server's min-watcher fallback then uses to roll the room
+            # back. Use the just-applied global position instead; the
+            # next askPlayer tick will return us to the normal path.
+            position = self.getGlobalPosition()
         else:
             position = self.getPlayerPosition()
         pauseChange, _ = self._determinePlayerStateChange(paused, position)

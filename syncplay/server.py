@@ -614,6 +614,12 @@ class Room(object):
 
     def setPosition(self, position, setBy=None):
         self._position = position
+        # syncplay-modern: reset _lastUpdate so the min-watcher fallback
+        # in getPosition can't fire for ~1 s after a real seek/pause
+        # change. A client that races our authoritative setPosition
+        # with a stale-position echo would otherwise drag the room
+        # backward to the slowest watcher's pre-seek time.
+        self._lastUpdate = time.time()
         for watcher in self._watchers.values():
             watcher.setPosition(position)
             self._setBy = setBy
