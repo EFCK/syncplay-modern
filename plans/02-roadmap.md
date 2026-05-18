@@ -24,16 +24,45 @@ The likely points of friction:
   `--vout=macosx` combination should work but needs to be verified on a
   Metal-layer machine.
 
-### Pytest suite
+### Pytest suite ✅ landed
 
-Right now, behaviour is verified with one-off headless `QApplication`
-scripts driven by `QtTest.QTest`. Each phase's commit message has a
-"verification" block describing what was exercised. A proper `pytest`
-suite — wrapping those scripts, adding coverage for the
-`MessageRouter` classification (which is Qt-free and unit-testable) —
-is a high-value contribution. Start with `MessageRouter`; that's the
-component most likely to silently misclassify a future upstream
-message-format change.
+A pytest suite now lives under `tests/`, runs on every push and PR
+via `.github/workflows/test.yml`, and is headless (no display, no
+real reactor). Coverage as of this entry:
+
+- **Qt-free unit tests** — `MessageRouter` classification,
+  `RoomState` diffing, the ready-gated-sync predicate /
+  outbound-silence / snap-on-ready / strict-all-ready-unpause /
+  setPaused-gate paths, and both legs of the seek-/pause-echo
+  regression (the client-side `getLocalState` substitution + the
+  server-side `Room.setPosition` cooldown).
+- **pytest-qt widget tests** — Toast lifecycle (show / stack-cap /
+  auto-hide / empty-text no-op), `SidebarTabs` unread badge,
+  `ErrorsPanel` rendering + clear-signal, `ChatPanel` bubble / sync
+  / error-pointer / submit signal, `RoomPanel` Ready button label
+  and enable-state.
+- **Server integration smoke tests** — drive two `SyncServerProtocol`
+  instances against a shared `SyncFactory` via Twisted's in-memory
+  `StringTransport`, covering Hello round-trip, chat broadcast,
+  ready propagation, State+seek forwarding, and the
+  separate-rooms-stay-separate isolation property.
+
+What's deliberately **not** covered:
+
+- **No reactor-driven end-to-end test.** The Twisted reactor is a
+  global singleton in the same process and doesn't play well with
+  pytest's collect/teardown cycle. The in-memory `StringTransport`
+  approach covers the protocol pipeline without the reactor; if a
+  reactor-level regression is suspected, the two-instance manual
+  smoke test in `CONTRIBUTING.md` is still the recommended path.
+- **No embedded-VLC test.** Exercising `embedded_vlc.py` end-to-end
+  requires a real libvlc and a video file; the libvlc import itself
+  is verified by the CI `apt install vlc` step, but no test plays
+  back media.
+- **No `mainWindow.py` full-flow test.** The widget tests cover the
+  panels in isolation; wiring them up through `MainWindow` requires
+  a stub `SyncplayClient` extensive enough that it duplicates the
+  protocol-layer integration tests for very little marginal value.
 
 ### In-video toast widget
 
