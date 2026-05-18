@@ -227,18 +227,33 @@ def test_get_local_state_uses_player_paused_in_steady_state():
 
 
 class _RecordingPlayer:
-    """Minimal BasePlayer surface."""
+    """Minimal BasePlayer surface.
+
+    ``askForStatus`` models libvlc's async apply latency: when the
+    client tells us to flip via ``setPaused``, the player's *reported*
+    state does NOT immediately follow. The test harness flips
+    ``reported_paused`` only when it wants to simulate libvlc finally
+    catching up — letting tests exercise the window where the cache
+    and the just-applied global disagree.
+    """
 
     def __init__(self):
         self.paused_calls = []
         self.position_calls = []
         self.speedSupported = False
+        self.reported_paused = True
+        self.reported_position = 0.0
+        self._client = None  # back-reference set by _make_full_client
 
     def setPaused(self, paused):
         self.paused_calls.append(paused)
 
     def setPosition(self, position):
         self.position_calls.append(position)
+
+    def askForStatus(self):
+        if self._client is not None:
+            self._client.updatePlayerStatus(self.reported_paused, self.reported_position)
 
 
 class _SilentUi:
@@ -261,6 +276,12 @@ class _FakeUserlist:
     def __init__(self, current_user):
         self.currentUser = current_user
 
+    def hasRoomStateChanged(self):
+        return False
+
+    def roomStateConfirmed(self):
+        pass
+
 
 def _make_full_client(*, player_paused, global_paused, player_position=100.0, global_position=100.0):
     """A SyncplayClient instance with enough state to exercise
@@ -271,8 +292,13 @@ def _make_full_client(*, player_paused, global_paused, player_position=100.0, gl
     client = SyncplayClient.__new__(SyncplayClient)
     client.userlist = _FakeUserlist(_FakeUser("me"))
     client._player = _RecordingPlayer()
+    client._player._client = client
+    client._player.reported_paused = player_paused
     client.ui = _SilentUi()
     client._protocol = None
+    client._running = True
+    # __getUserlistOnLogon is mangled; bypass __init__ explicitly.
+    client._SyncplayClient__getUserlistOnLogon = False
 
     now = time.time()
     # Steady-state-ish: askPlayer fresher than the last global update,
@@ -342,6 +368,91 @@ def test_serverUnpaused_echo_also_substitutes_global():
 
     _position, paused, _seeked, _state_change = client.getLocalState()
 
+    assert paused is False
+
+
+# ---------------------------------------------------------------------------
+# Full updateGlobalState path: the *real* production sequence, including
+# the synchronous askPlayer() that follows _changePlayerStateAccordingTo-
+# GlobalState. That askPlayer reads libvlc, which has not yet flipped
+# (30-120 ms apply latency), and the stale report poisons _playerPaused
+# AND bumps _lastPlayerUpdate past _lastGlobalUpdate — defeating the
+# getLocalState echo guard. The earlier tests skipped this hop entirely.
+# ---------------------------------------------------------------------------
+
+
+def test_updateGlobalState_resists_stale_askPlayer_tick_after_unpause():
+    """Reproduces the play-then-snap-back bug end-to-end.
+
+    1. Room is paused; we receive the server's unpause broadcast.
+    2. updateGlobalState applies it: _globalPaused=False, libvlc told
+       to play. Re-anchor sets _lastGlobalUpdate=now.
+    3. updateGlobalState then synchronously calls askPlayer() — but
+       libvlc still reports paused=True (it hasn't applied the
+       set_pause(0) call yet, ~30-120 ms latency).
+    4. Without the defense in updatePlayerStatus, that stale tick
+       writes _playerPaused=True and bumps _lastPlayerUpdate past
+       _lastGlobalUpdate.
+    5. protocols.handleState then calls getLocalState; the echo guard
+       (_lastPlayerUpdate < _lastGlobalUpdate) is defeated, so the
+       stale True is echoed to the server, which flips the room
+       PAUSED with setBy=us. User sees "X paused" right after
+       pressing play.
+    """
+    client = _make_full_client(player_paused=True, global_paused=True)
+    # libvlc lags: even after setPaused(False), askForStatus still
+    # reports paused=True until externally flipped.
+    client._player.reported_paused = True
+
+    client.updateGlobalState(
+        position=120.0, paused=False, doSeek=False, setBy="alice", messageAge=0,
+    )
+
+    _position, paused, _seeked, _state_change = client.getLocalState()
+
+    assert paused is False, (
+        "Echo must report the just-applied global unpause, not the stale "
+        "libvlc cache. Otherwise the server's Watcher.updateState flips "
+        "the room PAUSED setBy=us — the play-snap-back ping-pong."
+    )
+
+
+def test_updateGlobalState_resists_stale_askPlayer_tick_after_pause():
+    """Symmetric: room is playing, peer pauses, libvlc lags reporting
+    paused=False. Without the defense, the echo flips the room back
+    PLAYING with setBy=us — the pause-snap-back ping-pong.
+    """
+    client = _make_full_client(player_paused=False, global_paused=False)
+    client._player.reported_paused = False  # libvlc still says playing
+
+    client.updateGlobalState(
+        position=120.0, paused=True, doSeek=False, setBy="alice", messageAge=0,
+    )
+
+    _position, paused, _seeked, _state_change = client.getLocalState()
+
+    assert paused is True
+
+
+def test_updateGlobalState_accepts_player_tick_once_libvlc_catches_up():
+    """The defense must clear itself the moment libvlc catches up.
+    Otherwise we'd ignore genuine player reports forever and never
+    progress past the initial global update."""
+    client = _make_full_client(player_paused=True, global_paused=True)
+    # libvlc has already applied the unpause before askForStatus runs.
+    client._player.reported_paused = False
+    client._player.reported_position = 120.5
+
+    client.updateGlobalState(
+        position=120.0, paused=False, doSeek=False, setBy="alice", messageAge=0,
+    )
+
+    # askPlayer ran inside updateGlobalState; the report matched the
+    # just-applied global, so the normal path executed and the cache
+    # is now synced.
+    assert client._playerPaused is False
+    # getLocalState should still echo the correct unpause.
+    _position, paused, _seeked, _state_change = client.getLocalState()
     assert paused is False
 
 

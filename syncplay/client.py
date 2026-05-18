@@ -235,6 +235,24 @@ class SyncplayClient(object):
 
     def updatePlayerStatus(self, paused, position):
         position -= self.getUserOffset()
+        # syncplay-modern: pause-echo defense (sequel to 55b366d /
+        # de6b143). libvlc takes ~30-120 ms to actually apply a
+        # set_pause() call. updateGlobalState calls askPlayer()
+        # synchronously right after _changePlayerStateAccordingToGlobal-
+        # State, which lands here with `paused` still reporting the
+        # pre-flip libvlc state. Writing that into _playerPaused and
+        # bumping _lastPlayerUpdate past _lastGlobalUpdate defeats the
+        # getLocalState echo guard, and the stale value gets echoed
+        # back to the server — flipping the room with setBy=us. Drop
+        # the tick until libvlc catches up or the window expires.
+        if (
+            self._lastGlobalUpdate
+            and (self._lastPlayerUpdate or 0) < self._lastGlobalUpdate
+            and paused != self._globalPaused
+            and time.time() - self._lastGlobalUpdate < constants.PAUSE_ECHO_LIBVLC_CATCHUP_WINDOW
+        ):
+            return
+        # end syncplay-modern
         pauseChange, seeked = self._determinePlayerStateChange(paused, position)
         positionBeforeSeek = self._playerPosition
         self._playerPosition = position

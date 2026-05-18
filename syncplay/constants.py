@@ -214,6 +214,12 @@ MPV_ERROR_MESSAGES_TO_REPEAT = ['[ytdl_hook] Your version of youtube-dl is too o
 
 # Changing these is usually not something you're looking for
 PLAYER_ASK_DELAY = 0.1
+# syncplay-modern: window during which a stale libvlc paused-report
+# after a just-applied global state is treated as "libvlc hasn't
+# caught up yet" rather than a real player state. See pause-echo
+# defense in SyncplayClient.updatePlayerStatus and the regression
+# tests in tests/test_seek_echo_regression.py.
+PAUSE_ECHO_LIBVLC_CATCHUP_WINDOW = 0.5
 PING_MOVING_AVERAGE_WEIGHT = 0.85
 MPC_OPEN_MAX_WAIT_TIME = 10
 MPC_LOCK_WAIT_TIME = 0.2
