@@ -542,6 +542,35 @@ class PlaybackDialog(QtWidgets.QDialog):
         self._populate_combo(self._sub_combo, sub_tracks)
         self._audio_combo.setEnabled(bool(audio_tracks))
         self._sub_combo.setEnabled(bool(sub_tracks))
+        # Reflect the currently-active track. Without this the combos
+        # always opened at index 0 (typically "Disable") regardless of
+        # what libvlc was actually playing — so when users picked the
+        # track they wanted, if it matched libvlc's auto-selection the
+        # set call was a no-op and the dialog looked broken.
+        self._select_active_track(
+            self._audio_combo, lambda p: p.get_current_audio_track()
+        )
+        self._select_active_track(
+            self._sub_combo, lambda p: p.get_current_subtitle_track()
+        )
+
+    def _select_active_track(self, combo: QtWidgets.QComboBox, getter) -> None:
+        try:
+            player = self._get_player()
+        except Exception:
+            return
+        if player is None:
+            return
+        try:
+            current_id = getter(player)
+        except Exception:
+            return
+        for i in range(combo.count()):
+            if combo.itemData(i) == current_id:
+                combo.blockSignals(True)
+                combo.setCurrentIndex(i)
+                combo.blockSignals(False)
+                return
 
     # ------------------------------------------------------------------
 
@@ -567,10 +596,17 @@ class PlaybackDialog(QtWidgets.QDialog):
         if player is None or track_id is None or not hasattr(player, "set_audio_track"):
             return
         try:
-            player.set_audio_track(int(track_id))
-            self._notify_parent(f"Audio: {label}")
+            result = player.set_audio_track(int(track_id))
         except Exception as exc:
             self._notify_parent(f"Audio change failed: {exc}")
+            return
+        # libvlc returns 0 on success, -1 on error (typically a stale
+        # track ID — libvlc re-parsed and renumbered between populate
+        # and click). Surface that instead of silently doing nothing.
+        if result == -1:
+            self._notify_parent(f"Audio change rejected by libvlc (id={track_id})")
+        else:
+            self._notify_parent(f"Audio: {label}")
 
     def _on_subtitle_changed(self, index: int) -> None:
         track_id = self._sub_combo.itemData(index)
@@ -579,10 +615,14 @@ class PlaybackDialog(QtWidgets.QDialog):
         if player is None or track_id is None or not hasattr(player, "set_subtitle_track"):
             return
         try:
-            player.set_subtitle_track(int(track_id))
-            self._notify_parent(f"Subtitle: {label}")
+            result = player.set_subtitle_track(int(track_id))
         except Exception as exc:
             self._notify_parent(f"Subtitle change failed: {exc}")
+            return
+        if result == -1:
+            self._notify_parent(f"Subtitle change rejected by libvlc (id={track_id})")
+        else:
+            self._notify_parent(f"Subtitle: {label}")
 
     def _notify_parent(self, text: str) -> None:
         """Show a brief toast on the MainWindow if available."""

@@ -25,6 +25,7 @@ from syncplay.ui.modern.events import (
     SyncEvent,
 )
 from syncplay.ui.modern.roomPanel import RoomPanel
+from syncplay.ui.modern.settingsPanel import PlaybackDialog
 from syncplay.ui.modern.sidebarTabs import SidebarTabs
 from syncplay.ui.modern.toast import Toast
 
@@ -419,6 +420,138 @@ def test_seek_coalescer_each_new_press_extends_settle_window(qtbot):
     qtbot.wait(200)  # well past the latest start
 
     assert rec.flushes == [15.0]
+
+
+# ---------------------------------------------------------------------------
+# PlaybackDialog — audio / subtitle track switching
+# ---------------------------------------------------------------------------
+
+
+class _FakePlayer:
+    """Stand-in for EmbeddedVlcPlayer for the dialog's purposes."""
+
+    def __init__(self, audio_current: int = -1, sub_current: int = -1,
+                 audio_result: int = 0, sub_result: int = 0):
+        self.audio_calls: list[int] = []
+        self.subtitle_calls: list[int] = []
+        self._audio_current = audio_current
+        self._sub_current = sub_current
+        self._audio_result = audio_result
+        self._sub_result = sub_result
+
+    def get_audio_tracks(self):
+        return [
+            {"id": -1, "label": "Disable"},
+            {"id": 1, "label": "English"},
+            {"id": 2, "label": "Spanish"},
+        ]
+
+    def get_subtitle_tracks(self):
+        return [
+            {"id": -1, "label": "Disable"},
+            {"id": 3, "label": "EN subs"},
+            {"id": 4, "label": "FR subs"},
+        ]
+
+    def get_current_audio_track(self):
+        return self._audio_current
+
+    def get_current_subtitle_track(self):
+        return self._sub_current
+
+    def set_audio_track(self, tid):
+        self.audio_calls.append(tid)
+        return self._audio_result
+
+    def set_subtitle_track(self, tid):
+        self.subtitle_calls.append(tid)
+        return self._sub_result
+
+    def set_subtitle_delay_ms(self, ms):
+        pass
+
+
+def _make_playback_dialog(qtbot, player, parent=None):
+    if parent is None:
+        parent = QtWidgets.QWidget()
+        qtbot.addWidget(parent)
+    dialog = PlaybackDialog(
+        parent=parent,
+        config={},
+        fileinfo=None,
+        get_player=lambda: player,
+        on_persist=lambda k, v: None,
+    )
+    dialog._kept_alive_parent = parent
+    qtbot.addWidget(dialog)
+    return dialog
+
+
+def test_playback_dialog_calls_set_audio_track_on_combo_change(qtbot):
+    """Sanity: the basic wiring works. Picking 'Spanish' (id=2) calls
+    set_audio_track(2) on the player."""
+    player = _FakePlayer(audio_current=1)  # English active
+    dialog = _make_playback_dialog(qtbot, player)
+
+    # English (id=1) is already selected; pick Spanish (id=2) at combo index 2
+    dialog._audio_combo.setCurrentIndex(2)
+
+    assert player.audio_calls == [2]
+
+
+def test_playback_dialog_preselects_current_audio_track(qtbot):
+    """The combo should open showing the track libvlc is actually
+    playing — not 'Disable' at index 0. The 'looks broken' symptom
+    came from users picking what they wanted and seeing no change
+    because libvlc had auto-selected it already."""
+    player = _FakePlayer(audio_current=2)  # Spanish active
+    dialog = _make_playback_dialog(qtbot, player)
+
+    # Combo should pre-select index 2 (Spanish, id=2), not index 0.
+    assert dialog._audio_combo.currentData() == 2
+    # And pre-selection must not have triggered a redundant
+    # set_audio_track call.
+    assert player.audio_calls == []
+
+
+def test_playback_dialog_preselects_current_subtitle_track(qtbot):
+    player = _FakePlayer(sub_current=4)
+    dialog = _make_playback_dialog(qtbot, player)
+
+    assert dialog._sub_combo.currentData() == 4
+    assert player.subtitle_calls == []
+
+
+def test_playback_dialog_surfaces_libvlc_rejection(qtbot):
+    """libvlc's set_audio_track returns -1 if it rejects the ID (stale
+    track after a re-parse, etc). Without surfacing the return value
+    the dialog showed 'Audio: English' as if it worked — masking real
+    failures."""
+    player = _FakePlayer(audio_current=1, audio_result=-1)  # rejection
+    dialog = _make_playback_dialog(qtbot, player)
+
+    toasts = []
+    dialog._notify_parent = toasts.append
+
+    dialog._audio_combo.setCurrentIndex(2)  # pick Spanish
+
+    assert player.audio_calls == [2]
+    assert toasts == ["Audio change rejected by libvlc (id=2)"]
+
+
+def test_playback_dialog_disables_combo_when_no_tracks(qtbot):
+    """Files without audio (or subtitles) should disable the combo
+    so users don't try to interact with a dead control."""
+    class _EmptyPlayer(_FakePlayer):
+        def get_audio_tracks(self):
+            return []
+        def get_subtitle_tracks(self):
+            return []
+
+    dialog = _make_playback_dialog(qtbot, _EmptyPlayer())
+
+    assert not dialog._audio_combo.isEnabled()
+    assert not dialog._sub_combo.isEnabled()
 
 
 def test_seek_coalescer_separate_bursts_each_flush(qtbot):

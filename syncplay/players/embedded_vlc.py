@@ -539,11 +539,35 @@ class EmbeddedVlcPlayer(BasePlayer):
             for tid, label in (self._player.video_get_spu_description() or [])
         ]
 
-    def set_audio_track(self, track_id: int) -> None:
-        self._player.audio_set_track(int(track_id))
+    def set_audio_track(self, track_id: int) -> int:
+        # libvlc's audio_set_track returns 0 on success, -1 on error.
+        # Returning the value lets the dialog surface failures (e.g.
+        # an ID went stale because libvlc re-parsed tracks between the
+        # combo populate and the user's click).
+        return int(self._player.audio_set_track(int(track_id)))
 
-    def set_subtitle_track(self, track_id: int) -> None:
-        self._player.video_set_spu(int(track_id))
+    def set_subtitle_track(self, track_id: int) -> int:
+        return int(self._player.video_set_spu(int(track_id)))
+
+    def get_current_audio_track(self) -> int:
+        """Track ID libvlc is currently playing on the audio bus.
+
+        Used by PlaybackDialog so the combo reflects the actual
+        selection — opening the dialog and seeing 'Disable' selected
+        while audio is clearly audible was misleading users into
+        thinking the setting was broken when picking the same track
+        libvlc had auto-selected.
+        """
+        try:
+            return int(self._player.audio_get_track())
+        except Exception:
+            return -1
+
+    def get_current_subtitle_track(self) -> int:
+        try:
+            return int(self._player.video_get_spu())
+        except Exception:
+            return -1
 
     def cycle_audio_track(self) -> str:
         """Switch to the next audio track. Returns the new track's label."""
