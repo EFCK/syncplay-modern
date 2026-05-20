@@ -1185,6 +1185,18 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._right_container)
         self._overlay.hide()
 
+        # Hyprland (and a few other XWayland compositors) sometimes
+        # interpret a fullscreen request as "maximize" when the window
+        # was previously in a maximized or non-default state — Qt
+        # sends _NET_WM_STATE_FULLSCREEN but the compositor honors the
+        # earlier state. Clear maximize/minimize bits first, flush
+        # them through the event loop, then transition to fullscreen
+        # so the WM sees a clean state change. No-op on compositors
+        # that handle the request correctly the first time.
+        self.setWindowState(
+            self.windowState() & ~(QtCore.Qt.WindowMaximized | QtCore.Qt.WindowMinimized)
+        )
+        QtWidgets.QApplication.processEvents()
         self.showFullScreen()
         self._fs_reposition_overlay()
         self._toast_reposition()
