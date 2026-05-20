@@ -99,6 +99,18 @@ See `docs/superpowers/specs/` for the design spec and implementation phases.
   - Debian/Ubuntu: `sudo apt install x11-xserver-utils`
   - Arch/CachyOS: `sudo pacman -S xorg-xset`
   - Fedora: `sudo dnf install xset`
+- **Hyprland note:** Hyprland's XWayland sometimes interprets a
+  fullscreen request as "maximize within tiling" and the F key just
+  expands the window inside the current cell. The app issues the
+  fullscreen handshake before mutating its inner layout precisely to
+  avoid this, but if your config still snaps it to maximize, add the
+  following rule to `~/.config/hypr/hyprland.conf`:
+  ```
+  windowrulev2 = fullscreen, class:syncplay-modern
+  ```
+  Reload Hyprland (`hyprctl reload`) and try again. If the WM_CLASS
+  in your build differs, `hyprctl clients` while the app is running
+  prints it.
 
 ### Run from source
 
