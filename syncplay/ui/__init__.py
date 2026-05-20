@@ -73,6 +73,13 @@ if _override is not None:
     # but doesn't pollute the protocol log on stdout.
     print(f"[syncplay-modern] {_reason}", file=sys.stderr)
 
+# Splice the noise filter in front of fd 2 before libvlc is loaded.
+# Must run *after* the platform notice above so the notice itself
+# reaches the original (pre-filter) stderr without going through the
+# pump thread — keeps the message ordering deterministic on startup.
+from syncplay.ui.stderr_filter import install as _install_stderr_filter
+_install_stderr_filter()
+
 # Set the desktop file name before QApplication construction so Qt's
 # platform plugin uses it at the first D-Bus contact with
 # xdg-desktop-portal. Calling QGuiApplication.setDesktopFileName()
