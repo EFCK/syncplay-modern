@@ -1134,21 +1134,39 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._is_fullscreen = True
 
-        # Snapshot the chat scroll position before the reparent — Qt's
-        # QTextBrowser resets its scrollbar to 0 when the widget is
-        # removed from its parent layout, so we capture-and-restore.
+        # Snapshot state we'll need to restore on exit. These are
+        # all reads — no layout mutation, so they're safe to do
+        # before the fullscreen handshake with the WM.
         chat_scroll = self._chat_panel.scroll_state()
-
-        # Remember whether the chat was visible so we can restore it on
-        # exit; the toggle strip is also hidden while fullscreen.
         self._saved_chat_visible = self._chat_visible
+        self._saved_tab_index = self._tabs.currentIndex()
+
+        # Drive the WM transition FIRST, before any layout/visibility
+        # mutations. Hyprland's XWayland (and a few other compositors)
+        # interpret _NET_WM_STATE_FULLSCREEN as "maximize within current
+        # cell" if it arrives mid-resize — the menubar hide and chat
+        # reparent below both trigger Qt resize events, and racing them
+        # against the fullscreen request reliably gets us maximize on
+        # Hyprland. Clear maximize/minimize bits, flush, request
+        # fullscreen, flush again so the WM has fully transitioned
+        # before we touch anything else. No-op on compositors that
+        # already handle the request correctly.
+        self.setWindowState(
+            self.windowState() & ~(QtCore.Qt.WindowMaximized | QtCore.Qt.WindowMinimized)
+        )
+        QtWidgets.QApplication.processEvents()
+        self.showFullScreen()
+        QtWidgets.QApplication.processEvents()
+
+        # Now safe to mutate the inner layout — the window is already
+        # locked to screen geometry, so child resizes don't kick the
+        # WM into reinterpreting our window state.
         self._chat_toggle.setVisible(False)
         self.menuBar().setVisible(False)
 
         # In fullscreen only the Chat tab is useful — the Room/Errors
         # tabs add noise on top of the video. Hide the tab bar and
         # force Chat, then put everything back on exit.
-        self._saved_tab_index = self._tabs.currentIndex()
         self._tabs.setCurrentIndex(SidebarTabs.CHAT_INDEX)
         self._tabs.tabBar().setVisible(False)
 
@@ -1185,19 +1203,6 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._right_container)
         self._overlay.hide()
 
-        # Hyprland (and a few other XWayland compositors) sometimes
-        # interpret a fullscreen request as "maximize" when the window
-        # was previously in a maximized or non-default state — Qt
-        # sends _NET_WM_STATE_FULLSCREEN but the compositor honors the
-        # earlier state. Clear maximize/minimize bits first, flush
-        # them through the event loop, then transition to fullscreen
-        # so the WM sees a clean state change. No-op on compositors
-        # that handle the request correctly the first time.
-        self.setWindowState(
-            self.windowState() & ~(QtCore.Qt.WindowMaximized | QtCore.Qt.WindowMinimized)
-        )
-        QtWidgets.QApplication.processEvents()
-        self.showFullScreen()
         self._fs_reposition_overlay()
         self._toast_reposition()
         # Defer to next event tick so the QTextBrowser has been laid
