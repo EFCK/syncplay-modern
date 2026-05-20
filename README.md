@@ -90,6 +90,15 @@ See `docs/superpowers/specs/` for the design spec and implementation phases.
   app forces the xcb Qt platform plugin (libvlc can't draw into a
   Wayland surface in v1):
   `sudo apt install libxcb-cursor0`
+- **Linux only:** `xset` must be on `PATH`. libvlc's screensaver
+  inhibitor invokes `xdg-screensaver`, which shells out to `xset`;
+  without it you see `/usr/bin/xdg-screensaver: line N: xset: command
+  not found` warnings on every file load. Most distros bundle it with
+  the standard X11 utilities, but Hyprland / minimal-Wayland installs
+  often skip it:
+  - Debian/Ubuntu: `sudo apt install x11-xserver-utils`
+  - Arch/CachyOS: `sudo pacman -S xorg-xset`
+  - Fedora: `sudo dnf install xset`
 
 ### Run from source
 
