@@ -909,6 +909,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if player and hasattr(player, "adjust_subtitle_delay_ms"):
             new_ms = player.adjust_subtitle_delay_ms(delta_ms)
             self._brief_status(f"Subtitle delay {new_ms:+d} ms")
+            # Keep the config snapshot and any open PlaybackDialog in
+            # sync — without this, opening the dialog after pressing
+            # H/G shows a stale 0 while libvlc actually has an offset.
+            try:
+                self._persist_setting("subtitleDelayDefaultMs", int(new_ms))
+            except Exception:
+                pass
+            if self._playback_dialog is not None:
+                try:
+                    self._playback_dialog.refresh_subtitle_delay()
+                except Exception:
+                    pass
 
     def _kb_cycle_audio_track(self):
         player = self._player_or_none()

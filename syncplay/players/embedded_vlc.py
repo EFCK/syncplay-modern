@@ -610,3 +610,9 @@ class EmbeddedVlcPlayer(BasePlayer):
     def set_subtitle_delay_ms(self, delay_ms: int) -> None:
         # python-vlc takes microseconds.
         self._player.video_set_spu_delay(int(delay_ms) * 1000)
+
+    def get_subtitle_delay_ms(self) -> int:
+        try:
+            return int(self._player.video_get_spu_delay()) // 1000
+        except Exception:
+            return 0

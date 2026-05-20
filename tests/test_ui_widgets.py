@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 
 import pytest
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from syncplay.ui.modern.chatPanel import ChatPanel
 from syncplay.ui.modern.errorsPanel import ErrorsPanel
@@ -431,13 +431,16 @@ class _FakePlayer:
     """Stand-in for EmbeddedVlcPlayer for the dialog's purposes."""
 
     def __init__(self, audio_current: int = -1, sub_current: int = -1,
-                 audio_result: int = 0, sub_result: int = 0):
+                 audio_result: int = 0, sub_result: int = 0,
+                 subtitle_delay_ms: int = 0):
         self.audio_calls: list[int] = []
         self.subtitle_calls: list[int] = []
+        self.subtitle_delay_sets: list[int] = []
         self._audio_current = audio_current
         self._sub_current = sub_current
         self._audio_result = audio_result
         self._sub_result = sub_result
+        self._subtitle_delay_ms = int(subtitle_delay_ms)
 
     def get_audio_tracks(self):
         return [
@@ -468,7 +471,11 @@ class _FakePlayer:
         return self._sub_result
 
     def set_subtitle_delay_ms(self, ms):
-        pass
+        self.subtitle_delay_sets.append(int(ms))
+        self._subtitle_delay_ms = int(ms)
+
+    def get_subtitle_delay_ms(self):
+        return int(self._subtitle_delay_ms)
 
 
 def _make_playback_dialog(qtbot, player, parent=None):
@@ -537,6 +544,115 @@ def test_playback_dialog_surfaces_libvlc_rejection(qtbot):
 
     assert player.audio_calls == [2]
     assert toasts == ["Audio change rejected by libvlc (id=2)"]
+
+
+def test_playback_dialog_spin_reflects_live_subtitle_delay(qtbot):
+    """The dialog must read the live player delay on open, not the
+    config snapshot. Pressing H/G before opening the dialog adjusts
+    libvlc directly; if the dialog still showed config (0), users
+    saw a value that didn't match playback."""
+    player = _FakePlayer(subtitle_delay_ms=150)
+    # Config snapshot is deliberately stale (0) — we want to prove
+    # the dialog prefers the player value.
+    parent = QtWidgets.QWidget()
+    qtbot.addWidget(parent)
+    persisted: list[tuple[str, object]] = []
+    dialog = PlaybackDialog(
+        parent=parent,
+        config={"subtitleDelayDefaultMs": 0},
+        fileinfo=None,
+        get_player=lambda: player,
+        on_persist=lambda k, v: persisted.append((k, v)),
+    )
+    dialog._kept_alive_parent = parent
+    qtbot.addWidget(dialog)
+
+    assert dialog._sub_delay_spin.value() == 150
+    # Initial population must not bounce back through set/persist.
+    assert player.subtitle_delay_sets == []
+    assert persisted == []
+
+
+def test_playback_dialog_falls_back_to_config_when_no_player(qtbot):
+    """When the player is unavailable (no file open yet) the dialog
+    has no live value to read, so it must fall back to the config
+    snapshot instead of showing a hardcoded 0."""
+    parent = QtWidgets.QWidget()
+    qtbot.addWidget(parent)
+    dialog = PlaybackDialog(
+        parent=parent,
+        config={"subtitleDelayDefaultMs": 75},
+        fileinfo=None,
+        get_player=lambda: None,
+        on_persist=lambda k, v: None,
+    )
+    dialog._kept_alive_parent = parent
+    qtbot.addWidget(dialog)
+
+    assert dialog._sub_delay_spin.value() == 75
+
+
+def test_playback_dialog_refresh_subtitle_delay_pulls_from_player(qtbot):
+    """After H/G fires outside the dialog, MainWindow calls
+    refresh_subtitle_delay so the spinbox catches up. The refresh
+    must not re-persist or re-call set_subtitle_delay_ms — the
+    keyboard path already did both."""
+    player = _FakePlayer(subtitle_delay_ms=0)
+    persisted: list[tuple[str, object]] = []
+    parent = QtWidgets.QWidget()
+    qtbot.addWidget(parent)
+    dialog = PlaybackDialog(
+        parent=parent,
+        config={},
+        fileinfo=None,
+        get_player=lambda: player,
+        on_persist=lambda k, v: persisted.append((k, v)),
+    )
+    dialog._kept_alive_parent = parent
+    qtbot.addWidget(dialog)
+
+    # Simulate the keyboard path moving libvlc independently.
+    player._subtitle_delay_ms = 200
+
+    dialog.refresh_subtitle_delay()
+
+    assert dialog._sub_delay_spin.value() == 200
+    # Pulling state in must not push state back out.
+    assert player.subtitle_delay_sets == []
+    assert persisted == []
+
+
+def test_playback_dialog_h_shortcut_steps_spin_and_player(qtbot):
+    """H/G shortcuts are dead while the modal dialog has focus
+    (MainWindow's WindowShortcut is suppressed). The dialog re-binds
+    them locally; each press must step the spinbox AND call into the
+    player so the displayed value matches libvlc."""
+    player = _FakePlayer(subtitle_delay_ms=0)
+    persisted: list[tuple[str, object]] = []
+    parent = QtWidgets.QWidget()
+    qtbot.addWidget(parent)
+    dialog = PlaybackDialog(
+        parent=parent,
+        config={},
+        fileinfo=None,
+        get_player=lambda: player,
+        on_persist=lambda k, v: persisted.append((k, v)),
+    )
+    dialog._kept_alive_parent = parent
+    qtbot.addWidget(dialog)
+
+    # Find the H shortcut and activate it (QTest keyClicks needs a
+    # focused widget that accepts the key — going through .activated
+    # is the same code path with less Qt-event plumbing).
+    h_shortcut = next(
+        s for s in dialog.findChildren(QtGui.QShortcut)
+        if s.key().toString() == "H"
+    )
+    h_shortcut.activated.emit()
+
+    assert dialog._sub_delay_spin.value() == 50
+    assert player.subtitle_delay_sets == [50]
+    assert persisted == [("subtitleDelayDefaultMs", 50)]
 
 
 def test_playback_dialog_disables_combo_when_no_tracks(qtbot):

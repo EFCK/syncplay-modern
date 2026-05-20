@@ -478,7 +478,16 @@ class PlaybackDialog(QtWidgets.QDialog):
         self._sub_delay_spin.setRange(-10000, 10000)
         self._sub_delay_spin.setSingleStep(50)
         self._sub_delay_spin.setSuffix(" ms")
-        self._sub_delay_spin.setValue(int(self._config.get("subtitleDelayDefaultMs") or 0))
+        # Source of truth is libvlc, not the config snapshot — h/g
+        # shortcuts adjust libvlc directly, so reading from config here
+        # would show a stale 0 while playback was actually offset.
+        live_delay = self._read_live_subtitle_delay()
+        initial_delay = (
+            live_delay
+            if live_delay is not None
+            else int(self._config.get("subtitleDelayDefaultMs") or 0)
+        )
+        self._sub_delay_spin.setValue(int(initial_delay))
         self._sub_delay_spin.valueChanged.connect(self._on_sub_delay_changed)
         sub_delay_reset = QtWidgets.QPushButton("Reset")
         sub_delay_reset.clicked.connect(lambda: self._sub_delay_spin.setValue(0))
@@ -488,6 +497,19 @@ class PlaybackDialog(QtWidgets.QDialog):
         sub_delay_wrapper.setLayout(sub_delay_row)
         sub_delay_row.setContentsMargins(0, 0, 0, 0)
         form.addRow("Subtitle delay", sub_delay_wrapper)
+
+        # MainWindow's H/G WindowShortcut is suppressed while this
+        # dialog is the active top-level window, so re-bind them here.
+        # Routing through the spinbox keeps the player + config + UI
+        # in lockstep via the existing valueChanged handler.
+        for seq, delta in (("H", 50), ("G", -50)):
+            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self)
+            sc.setContext(QtCore.Qt.WindowShortcut)
+            sc.activated.connect(
+                lambda d=delta: self._sub_delay_spin.setValue(
+                    self._sub_delay_spin.value() + d
+                )
+            )
 
         self._chat_on_video = QtWidgets.QCheckBox("Show chat on video")
         self._chat_on_video.setChecked(bool(self._config.get("chatOnVideoEnabled")))
@@ -641,6 +663,34 @@ class PlaybackDialog(QtWidgets.QDialog):
             except Exception:
                 pass
         self._persist("subtitleDelayDefaultMs", int(value))
+
+    def _read_live_subtitle_delay(self) -> Optional[int]:
+        try:
+            player = self._get_player()
+        except Exception:
+            return None
+        if player is None or not hasattr(player, "get_subtitle_delay_ms"):
+            return None
+        try:
+            return int(player.get_subtitle_delay_ms())
+        except Exception:
+            return None
+
+    def refresh_subtitle_delay(self) -> None:
+        """Pull the live libvlc delay into the spinbox.
+
+        Called by MainWindow after the H/G shortcut fires outside the
+        dialog. Signals are blocked so the refresh itself doesn't
+        bounce back through set_subtitle_delay_ms or re-persist.
+        """
+        live = self._read_live_subtitle_delay()
+        if live is None:
+            return
+        self._sub_delay_spin.blockSignals(True)
+        try:
+            self._sub_delay_spin.setValue(int(live))
+        finally:
+            self._sub_delay_spin.blockSignals(False)
 
     def _on_chat_on_video(self, on: bool) -> None:
         self._persist("chatOnVideoEnabled", bool(on))
