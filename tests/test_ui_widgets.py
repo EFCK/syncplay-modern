@@ -188,6 +188,38 @@ def test_sidebar_switching_to_errors_clears_badge(qtbot):
     assert tabs.tabText(SidebarTabs.ERRORS_INDEX) == "Errors"
 
 
+def test_sidebar_chat_badge_starts_at_zero(qtbot):
+    tabs = _build_sidebar(qtbot)
+    assert tabs.chat_unread_count() == 0
+
+
+def test_sidebar_note_chat_bumps_unread_when_not_on_chat_tab(qtbot):
+    tabs = _build_sidebar(qtbot)
+    tabs.setCurrentIndex(SidebarTabs.ROOM_INDEX)
+    tabs.note_chat()
+    tabs.note_chat()
+    tabs.note_chat()
+    assert tabs.chat_unread_count() == 3
+
+
+def test_sidebar_note_chat_is_noop_while_on_chat_tab(qtbot):
+    tabs = _build_sidebar(qtbot)
+    tabs.setCurrentIndex(SidebarTabs.CHAT_INDEX)
+    tabs.note_chat()
+    assert tabs.chat_unread_count() == 0
+
+
+def test_sidebar_switching_to_chat_clears_badge(qtbot):
+    tabs = _build_sidebar(qtbot)
+    tabs.setCurrentIndex(SidebarTabs.ROOM_INDEX)
+    tabs.note_chat()
+    tabs.note_chat()
+    assert tabs.chat_unread_count() == 2
+
+    tabs.setCurrentIndex(SidebarTabs.CHAT_INDEX)
+    assert tabs.chat_unread_count() == 0
+
+
 # ---------------------------------------------------------------------------
 # ErrorsPanel
 # ---------------------------------------------------------------------------

@@ -328,6 +328,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._chat_panel.render_chat(
                 ChatMessage(user=username, text=text, is_self=is_self, timestamp=time.time())
             )
+            if not is_self:
+                self._tabs.note_chat()
             return
         self._router.showMessage(message, noTimestamp=noTimestamp, isMotd=isMotd)
         if getattr(constants, "DEBUG_MODE", False):
@@ -493,6 +495,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(event, ChatMessage):
             self._chat_panel.render_chat(event)
             self._maybe_toast_chat(event)
+            if not event.is_self:
+                self._tabs.note_chat()
         elif isinstance(event, SyncEvent):
             self._chat_panel.render_sync(event)
         elif isinstance(event, ErrorEvent):
