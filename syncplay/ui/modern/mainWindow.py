@@ -686,24 +686,37 @@ class MainWindow(QtWidgets.QMainWindow):
         quit_act.triggered.connect(self.close)
         file_menu.addAction(quit_act)
 
-        # Playback gets its own top-level entry next to File — the audio
-        # / subtitle / sub-delay controls are the ones users reach for
-        # most, so they're one click away rather than buried in Settings.
-        playback_act = QtGui.QAction("&Playback…", self)
+        # Playback gets its own top-level menu next to File — the audio /
+        # subtitle / sub-delay controls are the ones users reach for most,
+        # so they're one click away rather than buried in Settings. The
+        # action must live inside a QMenu (not added bare to the menubar
+        # with `bar.addAction`) so it actually renders on macOS's native
+        # menu bar, which only displays top-level QMenus.
+        playback_menu = bar.addMenu("&Playback")
+        playback_act = QtGui.QAction("&Audio && Subtitles…", self)
+        # Pin the role so macOS doesn't try to auto-classify this entry
+        # based on the action text (the heuristic would otherwise hide
+        # anything matching its preferences/about/quit patterns).
+        playback_act.setMenuRole(QtGui.QAction.NoRole)
         playback_act.triggered.connect(self._open_playback)
-        bar.addAction(playback_act)
+        playback_menu.addAction(playback_act)
 
-        # Settings (everything except live playback) — no sibling menu
-        # actions, so use a direct top-level action that opens the
-        # tabbed dialog on click.
-        settings_act = QtGui.QAction("&Settings…", self)
+        # Settings (everything except live playback). Wrapped in a QMenu
+        # for the same macOS-native-bar reason as Playback above. The
+        # action is flagged `PreferencesRole` so on macOS Qt moves it to
+        # the application menu's Preferences slot (the standard Cmd+,
+        # position); on Linux/Windows it stays under the Settings menu.
+        settings_menu = bar.addMenu("&Settings")
+        settings_act = QtGui.QAction("&Preferences…", self)
         settings_act.setShortcut("Ctrl+,")
+        settings_act.setMenuRole(QtGui.QAction.PreferencesRole)
         settings_act.triggered.connect(self._open_settings)
-        bar.addAction(settings_act)
+        settings_menu.addAction(settings_act)
 
-        # Theme toggle button in the top-right corner of the menu bar.
-        # `setCornerWidget(..., TopRightCorner)` is Qt's official slot for
-        # this — no extra layout gymnastics needed.
+        # Theme toggle — docked into the sidebar tab widget's top-right
+        # corner. QMenuBar.setCornerWidget is a no-op when Qt is using
+        # the native macOS menu bar, but QTabWidget.setCornerWidget
+        # paints inside the window on every platform.
         text, tip = theme_mod.button_label_for(self._theme)
         self._theme_btn = QtWidgets.QToolButton(self)
         self._theme_btn.setText(text)
@@ -716,7 +729,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "QToolButton:hover { background: rgba(127,127,127,40); border-radius: 3px; }"
         )
         self._theme_btn.clicked.connect(self._toggle_theme)
-        bar.setCornerWidget(self._theme_btn, QtCore.Qt.TopRightCorner)
+        self._tabs.setCornerWidget(self._theme_btn, QtCore.Qt.TopRightCorner)
 
     def _apply_theme(self, theme: str) -> None:
         """Push the corresponding stylesheet onto the QApplication and
