@@ -665,6 +665,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_menu(self) -> None:
         bar = self.menuBar()
+        # macOS routes QMenuBar into the system-wide menu strip at the
+        # top of the screen by default, and for an unbundled Python
+        # launch (no .app wrapper) the strip is labelled `python3.x`
+        # rather than the app name — users don't recognise it as their
+        # menu. Worse, an action with PreferencesRole is auto-moved
+        # into the Application menu, which leaves a single-item
+        # Settings menu empty and therefore unrendered. Force the
+        # in-window menu bar everywhere so all menus appear where
+        # users expect them, regardless of platform or bundle state.
+        bar.setNativeMenuBar(False)
         file_menu = bar.addMenu("&File")
 
         open_file = QtGui.QAction("&Open File…", self)
