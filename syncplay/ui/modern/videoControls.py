@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from syncplay.ui.modern.i18n import tr
+
 
 class _JumpSlider(QtWidgets.QSlider):
     """QSlider that jumps to the click position instead of paging.
@@ -100,7 +102,7 @@ class VideoControls(QtWidgets.QFrame):
 
         self._play_btn = QtWidgets.QToolButton(self)
         self._play_btn.setText("▶")
-        self._play_btn.setToolTip("Play / Pause")
+        self._play_btn.setToolTip(tr("vc-play-pause"))
         # AutoRaise suppresses the native Windows button frame so the
         # stylesheet's transparent background actually shows through.
         self._play_btn.setAutoRaise(True)
@@ -127,7 +129,7 @@ class VideoControls(QtWidgets.QFrame):
 
         self._mute_btn = QtWidgets.QToolButton(self)
         self._mute_btn.setText("🔊")
-        self._mute_btn.setToolTip("Mute")
+        self._mute_btn.setToolTip(tr("vc-mute"))
         self._mute_btn.setAutoRaise(True)
         self._mute_btn.clicked.connect(self.muteToggleRequested.emit)
 
@@ -143,7 +145,7 @@ class VideoControls(QtWidgets.QFrame):
 
         self._fs_btn = QtWidgets.QToolButton(self)
         self._fs_btn.setText("⛶")
-        self._fs_btn.setToolTip("Fullscreen")
+        self._fs_btn.setToolTip(tr("vc-fullscreen"))
         self._fs_btn.setAutoRaise(True)
         self._fs_btn.clicked.connect(self.fullscreenToggleRequested.emit)
 
@@ -157,6 +159,11 @@ class VideoControls(QtWidgets.QFrame):
         layout.addWidget(self._mute_btn)
         layout.addWidget(self._volume)
         layout.addWidget(self._fs_btn)
+
+    def retranslate(self) -> None:
+        self._play_btn.setToolTip(tr("vc-play-pause"))
+        self._mute_btn.setToolTip(tr("vc-mute"))
+        self._fs_btn.setToolTip(tr("vc-fullscreen"))
 
     # --- State sync -------------------------------------------------------
 

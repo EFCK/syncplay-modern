@@ -42,6 +42,7 @@ from syncplay.ui.modern.messageRouter import MessageRouter
 from syncplay.ui.modern.queuePanel import QueuePanel
 from syncplay.ui.modern.roomPanel import RoomPanel
 from syncplay.ui.modern.roomState import RoomState
+from syncplay.ui.modern.i18n import tr
 from syncplay.ui.modern.settingsPanel import PlaybackDialog, SettingsDialog
 from syncplay.ui.modern import theme as theme_mod
 from syncplay.ui.modern.sidebarTabs import SidebarTabs
@@ -116,7 +117,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, passedBar=None) -> None:  # noqa: N803 — keep upstream name
         super().__init__()
         self.uiMode = constants.GRAPHICAL_UI_MODE
-        self.setWindowTitle("syncplay-modern")
+        self.setWindowTitle(tr("window-title"))
         self.resize(1100, 660)
 
         # Apply the saved theme as early as possible so freshly-created
@@ -196,7 +197,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding
         )
         self._chat_toggle.setCursor(QtCore.Qt.PointingHandCursor)
-        self._chat_toggle.setToolTip("Hide chat")
+        self._chat_toggle.setToolTip(tr("chat-hide"))
         self._chat_toggle.setFocusPolicy(QtCore.Qt.NoFocus)
         # Transparent background; only the chevron glyph paints. Stylesheet
         # is rebuilt by `_restyle_chat_toggle()` whenever the theme flips
@@ -363,9 +364,7 @@ class MainWindow(QtWidgets.QMainWindow):
         transition) isn't ready.
         """
         count = max(int(notReadyCount), 1)
-        text = "Waiting for {} user{} to ready up".format(
-            count, "" if count == 1 else "s"
-        )
+        text = tr("waiting-ready-one") if count == 1 else tr("waiting-ready-many", n=count)
         self._brief_status(text, duration_ms=2500)
 
     def showErrorMessage(self, message, criticalerror=False):
@@ -675,26 +674,29 @@ class MainWindow(QtWidgets.QMainWindow):
         # in-window menu bar everywhere so all menus appear where
         # users expect them, regardless of platform or bundle state.
         bar.setNativeMenuBar(False)
-        file_menu = bar.addMenu("&File")
+        # Stash refs to menus + actions so retranslate() can repaint
+        # their captions without rebuilding the menu bar (which would
+        # detach the shortcut/handler wiring set up here).
+        self._menu_file = bar.addMenu(tr("menu-file"))
 
-        open_file = QtGui.QAction("&Open File…", self)
-        open_file.setShortcut(QtGui.QKeySequence.Open)
-        open_file.triggered.connect(self._dialog_open_file)
-        file_menu.addAction(open_file)
+        self._action_open_file = QtGui.QAction(tr("menu-open-file"), self)
+        self._action_open_file.setShortcut(QtGui.QKeySequence.Open)
+        self._action_open_file.triggered.connect(self._dialog_open_file)
+        self._menu_file.addAction(self._action_open_file)
 
-        open_url = QtGui.QAction("Open &URL…", self)
-        open_url.triggered.connect(self._dialog_open_url)
-        file_menu.addAction(open_url)
+        self._action_open_url = QtGui.QAction(tr("menu-open-url"), self)
+        self._action_open_url.triggered.connect(self._dialog_open_url)
+        self._menu_file.addAction(self._action_open_url)
 
-        file_menu.addSeparator()
+        self._menu_file.addSeparator()
 
-        quit_act = QtGui.QAction("&Quit", self)
-        quit_act.setShortcut(QtGui.QKeySequence.Quit)
+        self._action_quit = QtGui.QAction(tr("menu-quit"), self)
+        self._action_quit.setShortcut(QtGui.QKeySequence.Quit)
         # Route through self.close() so closeEvent runs the libvlc /
         # reactor teardown — QApplication.quit() alone leaves audio
         # threads playing.
-        quit_act.triggered.connect(self.close)
-        file_menu.addAction(quit_act)
+        self._action_quit.triggered.connect(self.close)
+        self._menu_file.addAction(self._action_quit)
 
         # Playback gets its own top-level menu next to File — the audio /
         # subtitle / sub-delay controls are the ones users reach for most,
@@ -702,26 +704,26 @@ class MainWindow(QtWidgets.QMainWindow):
         # action must live inside a QMenu (not added bare to the menubar
         # with `bar.addAction`) so it actually renders on macOS's native
         # menu bar, which only displays top-level QMenus.
-        playback_menu = bar.addMenu("&Playback")
-        playback_act = QtGui.QAction("&Audio && Subtitles…", self)
+        self._menu_playback = bar.addMenu(tr("menu-playback"))
+        self._action_playback = QtGui.QAction(tr("menu-audio-subs"), self)
         # Pin the role so macOS doesn't try to auto-classify this entry
         # based on the action text (the heuristic would otherwise hide
         # anything matching its preferences/about/quit patterns).
-        playback_act.setMenuRole(QtGui.QAction.NoRole)
-        playback_act.triggered.connect(self._open_playback)
-        playback_menu.addAction(playback_act)
+        self._action_playback.setMenuRole(QtGui.QAction.NoRole)
+        self._action_playback.triggered.connect(self._open_playback)
+        self._menu_playback.addAction(self._action_playback)
 
         # Settings (everything except live playback). Wrapped in a QMenu
         # for the same macOS-native-bar reason as Playback above. The
         # action is flagged `PreferencesRole` so on macOS Qt moves it to
         # the application menu's Preferences slot (the standard Cmd+,
         # position); on Linux/Windows it stays under the Settings menu.
-        settings_menu = bar.addMenu("&Settings")
-        settings_act = QtGui.QAction("&Preferences…", self)
-        settings_act.setShortcut("Ctrl+,")
-        settings_act.setMenuRole(QtGui.QAction.PreferencesRole)
-        settings_act.triggered.connect(self._open_settings)
-        settings_menu.addAction(settings_act)
+        self._menu_settings = bar.addMenu(tr("menu-settings"))
+        self._action_preferences = QtGui.QAction(tr("menu-preferences"), self)
+        self._action_preferences.setShortcut("Ctrl+,")
+        self._action_preferences.setMenuRole(QtGui.QAction.PreferencesRole)
+        self._action_preferences.triggered.connect(self._open_settings)
+        self._menu_settings.addAction(self._action_preferences)
 
         # Theme toggle — docked into the sidebar tab widget's top-right
         # corner. QMenuBar.setCornerWidget is a no-op when Qt is using
@@ -911,31 +913,31 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         player.seek_by_seconds(delta_s)
         sign = "+" if delta_s >= 0 else ""
-        self._brief_status(f"Seek {sign}{int(delta_s)}s")
+        self._brief_status(tr("toast-seek", sign=sign, seconds=int(delta_s)))
 
     def _kb_volume(self, delta: int):
         player = self._player_or_none()
         if player and hasattr(player, "adjust_volume"):
             new_vol = player.adjust_volume(delta)
-            self._brief_status(f"Volume {new_vol}%")
+            self._brief_status(tr("toast-volume", percent=new_vol))
 
     def _kb_mute(self):
         player = self._player_or_none()
         if player and hasattr(player, "toggle_mute"):
             player.toggle_mute()
-            self._brief_status("Muted" if player.is_muted() else "Unmuted")
+            self._brief_status(tr("toast-muted") if player.is_muted() else tr("toast-unmuted"))
 
     def _kb_audio_delay(self, delta_ms: int):
         player = self._player_or_none()
         if player and hasattr(player, "adjust_audio_delay_ms"):
             new_ms = player.adjust_audio_delay_ms(delta_ms)
-            self._brief_status(f"Audio delay {new_ms:+d} ms")
+            self._brief_status(tr("toast-audio-delay", ms=new_ms))
 
     def _kb_subtitle_delay(self, delta_ms: int):
         player = self._player_or_none()
         if player and hasattr(player, "adjust_subtitle_delay_ms"):
             new_ms = player.adjust_subtitle_delay_ms(delta_ms)
-            self._brief_status(f"Subtitle delay {new_ms:+d} ms")
+            self._brief_status(tr("toast-subtitle-delay", ms=new_ms))
             # Keep the config snapshot and any open PlaybackDialog in
             # sync — without this, opening the dialog after pressing
             # H/G shows a stale 0 while libvlc actually has an offset.
@@ -954,26 +956,26 @@ class MainWindow(QtWidgets.QMainWindow):
         if player and hasattr(player, "cycle_audio_track"):
             label = player.cycle_audio_track()
             if label:
-                self._brief_status(f"Audio: {label}")
+                self._brief_status(tr("toast-audio-track", label=label))
 
     def _kb_cycle_subtitle_track(self):
         player = self._player_or_none()
         if player and hasattr(player, "cycle_subtitle_track"):
             label = player.cycle_subtitle_track()
             if label:
-                self._brief_status(f"Subtitle: {label}")
+                self._brief_status(tr("toast-subtitle-track", label=label))
 
     def _kb_speed(self, multiplier: float):
         player = self._player_or_none()
         if player and hasattr(player, "adjust_speed"):
             new_rate = player.adjust_speed(multiplier)
-            self._brief_status(f"Speed {new_rate:.2f}x")
+            self._brief_status(tr("toast-speed", rate=new_rate))
 
     def _kb_reset_speed(self):
         player = self._player_or_none()
         if player and hasattr(player, "reset_speed"):
             player.reset_speed()
-            self._brief_status("Speed 1.00x")
+            self._brief_status(tr("toast-speed-reset"))
 
     def _kb_toggle_fullscreen(self):
         if self._is_fullscreen:
@@ -1281,7 +1283,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._right_container.setVisible(self._chat_visible)
         self._chat_toggle.setText("❯" if self._chat_visible else "❮")
         self._chat_toggle.setToolTip(
-            "Hide chat" if self._chat_visible else "Show chat"
+            tr("chat-hide") if self._chat_visible else tr("chat-show")
         )
 
         # Bring the tab bar back and restore whatever tab the user was on.
@@ -1374,7 +1376,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._right_container.setVisible(self._chat_visible)
         self._chat_toggle.setText("❯" if self._chat_visible else "❮")
         self._chat_toggle.setToolTip(
-            "Hide chat" if self._chat_visible else "Show chat"
+            tr("chat-hide") if self._chat_visible else tr("chat-show")
         )
         # Force the HBox to recompute slot sizes immediately — some Qt
         # styles defer relayout until the next event tick, which leaves a
@@ -1434,6 +1436,48 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._toast_reposition()
         toast.show_message(f"{event.user}: {event.text}", duration=4000)
+
+    def retranslate(self) -> None:
+        """Re-apply tr() to every cached caption when the language flips.
+
+        Called by SettingsDialog when the language combo changes so the
+        user sees the switch take effect immediately, without relaunch.
+        Anything captioned at widget-build time and not snapshot-driven
+        needs to be touched here — menu bar items, window title, chat
+        toggle tooltip, and each panel's own retranslate() entry point.
+        """
+        self.setWindowTitle(tr("window-title"))
+
+        self._menu_file.setTitle(tr("menu-file"))
+        self._action_open_file.setText(tr("menu-open-file"))
+        self._action_open_url.setText(tr("menu-open-url"))
+        self._action_quit.setText(tr("menu-quit"))
+        self._menu_playback.setTitle(tr("menu-playback"))
+        self._action_playback.setText(tr("menu-audio-subs"))
+        self._menu_settings.setTitle(tr("menu-settings"))
+        self._action_preferences.setText(tr("menu-preferences"))
+
+        # Chat toggle tooltip mirrors current visibility state, same
+        # logic the toggle handler uses — kept in sync so the tooltip
+        # doesn't lie after a switch.
+        if getattr(self, "_chat_toggle", None) is not None:
+            self._chat_toggle.setToolTip(
+                tr("chat-hide") if self._chat_visible else tr("chat-show")
+            )
+
+        for panel in (
+            getattr(self, "_room_panel", None),
+            getattr(self, "_chat_panel", None),
+            getattr(self, "_queue_panel", None),
+            getattr(self, "_errors_panel", None),
+            getattr(self, "_video_controls", None),
+            getattr(self, "_tabs", None),
+        ):
+            if panel is not None and hasattr(panel, "retranslate"):
+                try:
+                    panel.retranslate()
+                except Exception:
+                    pass
 
     def _open_settings(self) -> None:
         if self._client is None:
@@ -1498,16 +1542,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def _dialog_open_file(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "Open Media",
+            tr("open-media-title"),
             "",
-            "Media files (*.mkv *.mp4 *.avi *.mov *.webm *.m4v *.flv *.wmv *.mpg *.mpeg *.ts);;All files (*)",
+            tr("open-media-filter"),
         )
         if path:
             self._open_local_file(path)
 
     def _dialog_open_url(self) -> None:
         url, ok = QtWidgets.QInputDialog.getText(
-            self, "Open URL", "Stream URL:", QtWidgets.QLineEdit.Normal, ""
+            self, tr("open-url-title"), tr("open-url-prompt"), QtWidgets.QLineEdit.Normal, ""
         )
         if ok and url.strip():
             self._open_local_file(url.strip())

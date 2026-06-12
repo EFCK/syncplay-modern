@@ -19,6 +19,7 @@ from syncplay.ui.modern.events import (
     PlaylistChanged,
     PlaylistIndexChanged,
 )
+from syncplay.ui.modern.i18n import tr
 
 
 class QueuePanel(QtWidgets.QWidget):
@@ -38,11 +39,7 @@ class QueuePanel(QtWidgets.QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        self._empty_hint = QtWidgets.QLabel(
-            "Drag a video file here or click “Add file…” to "
-            "start a shared queue. Items are visible to everyone in the room.",
-            self,
-        )
+        self._empty_hint = QtWidgets.QLabel(tr("queue-empty-hint"), self)
         self._empty_hint.setWordWrap(True)
         self._empty_hint.setStyleSheet("color: #888; font-style: italic;")
         layout.addWidget(self._empty_hint)
@@ -56,7 +53,7 @@ class QueuePanel(QtWidgets.QWidget):
 
         button_row = QtWidgets.QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
-        self._add_btn = QtWidgets.QPushButton("Add file…", self)
+        self._add_btn = QtWidgets.QPushButton(tr("queue-add-btn"), self)
         self._add_btn.clicked.connect(self._on_add_clicked)
         button_row.addWidget(self._add_btn)
         button_row.addStretch(1)
@@ -79,6 +76,10 @@ class QueuePanel(QtWidgets.QWidget):
         elif isinstance(event, PlaylistIndexChanged):
             self._current_filename = event.filename
             self._rebuild_list()
+
+    def retranslate(self) -> None:
+        self._empty_hint.setText(tr("queue-empty-hint"))
+        self._add_btn.setText(tr("queue-add-btn"))
 
     # --- Drag-drop ---------------------------------------------------------
 
@@ -132,9 +133,9 @@ class QueuePanel(QtWidgets.QWidget):
     def _on_add_clicked(self) -> None:
         paths, _filter = QtWidgets.QFileDialog.getOpenFileNames(
             self,
-            "Add files to playlist",
+            tr("queue-add-dialog-title"),
             "",
-            "Video files (*.mkv *.mp4 *.avi *.mov *.webm *.ts *.m4v);;All files (*)",
+            tr("open-media-filter"),
         )
         if paths:
             self.addFilesRequested.emit(list(paths))
@@ -144,8 +145,8 @@ class QueuePanel(QtWidgets.QWidget):
         if item is None:
             return
         menu = QtWidgets.QMenu(self)
-        play_action = menu.addAction("Play this")
-        remove_action = menu.addAction("Remove from queue")
+        play_action = menu.addAction(tr("queue-play-this"))
+        remove_action = menu.addAction(tr("queue-remove"))
         chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
         if chosen is play_action:
             self._on_item_double_clicked(item)

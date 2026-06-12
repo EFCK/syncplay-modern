@@ -19,6 +19,8 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from syncplay.ui.modern.i18n import tr
+
 
 _DEFAULT_PORT = 8997
 
@@ -73,18 +75,18 @@ class Onboarding(QtWidgets.QDialog):
         self._accepted = False
         self._save_after_accept = False
 
-        self.setWindowTitle("Connect to a Syncplay room")
+        self.setWindowTitle(tr("connect-window-title"))
         self.setMinimumWidth(480)
 
         form = QtWidgets.QFormLayout()
 
         self._name_edit = QtWidgets.QLineEdit(config.get("name") or "")
-        self._name_edit.setPlaceholderText("Your nickname")
-        form.addRow("Nickname", self._name_edit)
+        self._name_edit.setPlaceholderText(tr("onb-nickname-ph"))
+        form.addRow(tr("onb-nickname"), self._name_edit)
 
         host_value = config.get("host") or "syncplay.pl"
         self._host_edit = QtWidgets.QLineEdit(host_value)
-        form.addRow("Server", self._host_edit)
+        form.addRow(tr("onb-server"), self._host_edit)
 
         self._port_combo = QtWidgets.QComboBox()
         self._port_combo.setEditable(True)
@@ -94,43 +96,41 @@ class Onboarding(QtWidgets.QDialog):
             self._port_combo.insertItem(0, last_port)
         self._port_combo.setCurrentText(last_port)
         self._port_combo.setValidator(QtGui.QIntValidator(1, 65535, self))
-        form.addRow("Port", self._port_combo)
+        form.addRow(tr("onb-port"), self._port_combo)
 
         self._room_edit = QtWidgets.QLineEdit(config.get("room") or "")
-        self._room_edit.setPlaceholderText("Room name (any string)")
-        form.addRow("Room", self._room_edit)
+        self._room_edit.setPlaceholderText(tr("onb-room-ph"))
+        form.addRow(tr("onb-room"), self._room_edit)
 
         self._password_edit = QtWidgets.QLineEdit(_coerce_password(config.get("password")))
         self._password_edit.setEchoMode(QtWidgets.QLineEdit.Password)
-        self._password_edit.setPlaceholderText("Optional")
-        form.addRow("Server password", self._password_edit)
+        self._password_edit.setPlaceholderText(tr("onb-password-ph"))
+        form.addRow(tr("onb-password"), self._password_edit)
 
         # VLC install location — auto-detected on most systems; the field
         # exists for people whose VLC is in a non-default location.
         self._vlc_path_edit = QtWidgets.QLineEdit(config.get("vlcInstallPath") or "")
-        self._vlc_path_edit.setPlaceholderText("auto-detect")
-        self._vlc_browse_btn = QtWidgets.QPushButton("Browse…")
+        self._vlc_path_edit.setPlaceholderText(tr("onb-vlc-path-ph"))
+        self._vlc_browse_btn = QtWidgets.QPushButton(tr("onb-browse"))
         self._vlc_browse_btn.clicked.connect(self._on_browse_vlc_path)
         vlc_row = QtWidgets.QHBoxLayout()
         vlc_row.addWidget(self._vlc_path_edit, 1)
         vlc_row.addWidget(self._vlc_browse_btn)
-        form.addRow("VLC location", vlc_row)
+        form.addRow(tr("onb-vlc-path"), vlc_row)
 
-        self._vlc_hint = QtWidgets.QLabel(
-            "Only set this if VLC isn't installed in the default location."
-        )
+        self._vlc_hint = QtWidgets.QLabel(tr("onb-vlc-hint-default"))
         self._vlc_hint.setStyleSheet("color:#888;")
         self._vlc_hint.setWordWrap(True)
         form.addRow("", self._vlc_hint)
         self._vlc_path_edit.editingFinished.connect(self._validate_vlc_path)
         self._validate_vlc_path()
 
-        self._run_btn = QtWidgets.QPushButton("Run")
-        self._run_btn.setToolTip("Use these values for this session only; don't change the saved config.")
+        self._run_btn = QtWidgets.QPushButton(tr("onb-run"))
+        self._run_btn.setToolTip(tr("onb-run-tip"))
         self._run_btn.clicked.connect(lambda: self._on_accept(persist=False))
 
-        self._save_btn = QtWidgets.QPushButton("Update Config and Run")
-        self._save_btn.setToolTip("Save these values to the config and use them for this session.")
+        self._save_btn = QtWidgets.QPushButton(tr("onb-save-run"))
+        self._save_btn.setToolTip(tr("onb-save-run-tip"))
         self._save_btn.setDefault(True)
         self._save_btn.setAutoDefault(True)
         self._save_btn.clicked.connect(lambda: self._on_accept(persist=True))
@@ -160,8 +160,8 @@ class Onboarding(QtWidgets.QDialog):
         if not name or not host or not room:
             QtWidgets.QMessageBox.warning(
                 self,
-                "Missing fields",
-                "Nickname, server, and room are all required.",
+                tr("onb-missing-title"),
+                tr("onb-missing-body"),
             )
             return
         try:
@@ -171,8 +171,8 @@ class Onboarding(QtWidgets.QDialog):
         if not (1 <= port <= 65535):
             QtWidgets.QMessageBox.warning(
                 self,
-                "Invalid port",
-                "Port must be a number between 1 and 65535.",
+                tr("onb-bad-port-title"),
+                tr("onb-bad-port-body"),
             )
             return
         self._result = {
@@ -213,19 +213,15 @@ class Onboarding(QtWidgets.QDialog):
         path = self._vlc_path_edit.text().strip()
         if not path:
             self._vlc_hint.setStyleSheet("color:#888;")
-            self._vlc_hint.setText(
-                "Only set this if VLC isn't installed in the default location."
-            )
+            self._vlc_hint.setText(tr("onb-vlc-hint-default"))
             return
         if not os.path.isdir(path):
             self._vlc_hint.setStyleSheet("color:#c33;")
-            self._vlc_hint.setText("Folder doesn't exist.")
+            self._vlc_hint.setText(tr("onb-vlc-hint-missing"))
             return
         if _looks_like_vlc_dir(path):
             self._vlc_hint.setStyleSheet("color:#888;")
-            self._vlc_hint.setText("Looks like a VLC install.")
+            self._vlc_hint.setText(tr("onb-vlc-hint-ok"))
         else:
             self._vlc_hint.setStyleSheet("color:#c33;")
-            self._vlc_hint.setText(
-                "Couldn't find libvlc here — saving anyway; loader will surface the real error."
-            )
+            self._vlc_hint.setText(tr("onb-vlc-hint-unknown"))

@@ -14,6 +14,7 @@ from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from syncplay.ui.modern import theme as theme_mod
+from syncplay.ui.modern.i18n import tr
 from syncplay.ui.modern.events import (
     ChatMessage,
     ErrorEvent,
@@ -40,7 +41,7 @@ class ChatPanel(QtWidgets.QWidget):
         self._log.document().setDefaultStyleSheet(self._build_doc_css(self._theme))
 
         self._input = QtWidgets.QLineEdit(self)
-        self._input.setPlaceholderText("Send a message…")
+        self._input.setPlaceholderText(tr("chat-placeholder"))
         self._input.returnPressed.connect(self._on_submit)
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -54,6 +55,9 @@ class ChatPanel(QtWidgets.QWidget):
     def apply_theme(self, theme: str) -> None:
         self._theme = theme
         self._log.document().setDefaultStyleSheet(self._build_doc_css(theme))
+
+    def retranslate(self) -> None:
+        self._input.setPlaceholderText(tr("chat-placeholder"))
 
     @staticmethod
     def _build_doc_css(theme: str) -> str:

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from syncplay.ui.modern.i18n import tr
+
 
 class _BadgedTabBar(QtWidgets.QTabBar):
     """QTabBar that paints small "+N" pills on top of selected tabs."""
@@ -77,10 +79,10 @@ class SidebarTabs(QtWidgets.QTabWidget):
         self._chat_unread = 0
         self._badge_bar = _BadgedTabBar(self)
         self.setTabBar(self._badge_bar)
-        self.addTab(room_panel, "Room")
-        self.addTab(chat_panel, "Chat")
-        self.addTab(queue_panel, "Queue")
-        self.addTab(errors_panel, "Errors")
+        self.addTab(room_panel, tr("tab-room"))
+        self.addTab(chat_panel, tr("tab-chat"))
+        self.addTab(queue_panel, tr("tab-queue"))
+        self.addTab(errors_panel, tr("tab-errors"))
         self.currentChanged.connect(self._on_changed)
         self._refresh_errors_label()
 
@@ -117,7 +119,15 @@ class SidebarTabs(QtWidgets.QTabWidget):
             self.reset_chat_unread()
 
     def _refresh_errors_label(self) -> None:
+        base = tr("tab-errors")
         if self._unread:
-            self.setTabText(self.ERRORS_INDEX, f"Errors ●{self._unread}")
+            self.setTabText(self.ERRORS_INDEX, f"{base} ●{self._unread}")
         else:
-            self.setTabText(self.ERRORS_INDEX, "Errors")
+            self.setTabText(self.ERRORS_INDEX, base)
+
+    def retranslate(self) -> None:
+        self.setTabText(self.ROOM_INDEX, tr("tab-room"))
+        self.setTabText(self.CHAT_INDEX, tr("tab-chat"))
+        self.setTabText(self.QUEUE_INDEX, tr("tab-queue"))
+        # Errors keeps its unread-count suffix; the helper covers both.
+        self._refresh_errors_label()

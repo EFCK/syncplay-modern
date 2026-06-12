@@ -24,15 +24,24 @@ from typing import Any, Callable, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from syncplay import constants
+from syncplay.ui.modern.i18n import (
+    available_languages,
+    is_auto_detect_active,
+    set_language,
+    system_language,
+    tr,
+)
 
 
 # Upstream-defined enum values; surfaced verbatim so user choices land in
-# the INI exactly the way upstream expects to read them back.
-_PRIVACY_OPTIONS = [
-    ("Send actual value", constants.PRIVACY_SENDRAW_MODE),
-    ("Send hashed value", constants.PRIVACY_SENDHASHED_MODE),
-    ("Don't send at all", constants.PRIVACY_DONTSEND_MODE),
-]
+# the INI exactly the way upstream expects to read them back. Labels are
+# resolved at build time so a language change refreshes them on reopen.
+def _privacy_options() -> list[tuple[str, str]]:
+    return [
+        (tr("settings-priv-raw"), constants.PRIVACY_SENDRAW_MODE),
+        (tr("settings-priv-hashed"), constants.PRIVACY_SENDHASHED_MODE),
+        (tr("settings-priv-disabled"), constants.PRIVACY_DONTSEND_MODE),
+    ]
 
 class SettingsDialog(QtWidgets.QDialog):
 
@@ -45,7 +54,7 @@ class SettingsDialog(QtWidgets.QDialog):
         on_persist: Callable[[str, Any], None],
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Settings")
+        self.setWindowTitle(tr("settings-window-title"))
         self.setMinimumWidth(520)
         self.setMinimumHeight(520)
 
@@ -57,11 +66,12 @@ class SettingsDialog(QtWidgets.QDialog):
         outer.setContentsMargins(8, 8, 8, 8)
 
         self._tabs = QtWidgets.QTabWidget(self)
-        self._tabs.addTab(self._build_connection_tab(), "Connection")
-        self._tabs.addTab(self._build_sync_tab(), "Sync")
-        self._tabs.addTab(self._build_behavior_tab(), "Behavior")
-        self._tabs.addTab(self._build_privacy_tab(), "Privacy")
-        self._tabs.addTab(self._build_notifications_tab(), "Notifications")
+        self._tabs.addTab(self._build_connection_tab(), tr("settings-tab-connection"))
+        self._tabs.addTab(self._build_sync_tab(), tr("settings-tab-sync"))
+        self._tabs.addTab(self._build_behavior_tab(), tr("settings-tab-behavior"))
+        self._tabs.addTab(self._build_privacy_tab(), tr("settings-tab-privacy"))
+        self._tabs.addTab(self._build_notifications_tab(), tr("settings-tab-notifications"))
+        self._tabs.addTab(self._build_language_tab(), tr("settings-tab-language"))
         outer.addWidget(self._tabs, 1)
 
         button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
@@ -90,14 +100,11 @@ class SettingsDialog(QtWidgets.QDialog):
         form.setLabelAlignment(QtCore.Qt.AlignRight)
 
         host_port = f"{self._config.get('host', '')}:{self._config.get('port', '')}"
-        form.addRow("Server", self._readonly_label(host_port))
-        form.addRow("Nickname", self._readonly_label(self._config.get("name", "")))
-        form.addRow("Default room", self._readonly_label(self._config.get("room", "")))
+        form.addRow(tr("settings-server"), self._readonly_label(host_port))
+        form.addRow(tr("settings-nickname"), self._readonly_label(self._config.get("name", "")))
+        form.addRow(tr("settings-default-room"), self._readonly_label(self._config.get("room", "")))
 
-        note = QtWidgets.QLabel(
-            "These four values are set on the connect screen. Changing them "
-            "requires reconnecting — relaunch the app to pick up a new value."
-        )
+        note = QtWidgets.QLabel(tr("settings-connection-note"))
         note.setWordWrap(True)
         note.setStyleSheet("color: #888; font-size: 11px;")
         form.addRow("", note)
@@ -109,34 +116,31 @@ class SettingsDialog(QtWidgets.QDialog):
         form = QtWidgets.QFormLayout(widget)
         form.setLabelAlignment(QtCore.Qt.AlignRight)
 
-        intro = QtWidgets.QLabel(
-            "When peers drift apart in playback position, Syncplay nudges "
-            "your speed/position to bring you back in line. Tune that here."
-        )
+        intro = QtWidgets.QLabel(tr("settings-sync-intro"))
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #666; font-size: 11px;")
         form.addRow(intro)
 
         self._slow_on_desync = self._make_bool(
-            "slowOnDesync", default=True, label="Slow down when ahead of others"
+            "slowOnDesync", default=True, label=tr("settings-bool-slow-on-desync")
         )
-        form.addRow("Slow down", self._slow_on_desync)
+        form.addRow(tr("settings-row-slow-down"), self._slow_on_desync)
 
         self._rewind_on_desync = self._make_bool(
-            "rewindOnDesync", default=True, label="Rewind if I'm too far ahead"
+            "rewindOnDesync", default=True, label=tr("settings-bool-rewind-on-desync")
         )
-        form.addRow("Rewind", self._rewind_on_desync)
+        form.addRow(tr("settings-row-rewind"), self._rewind_on_desync)
 
         self._fastfwd_on_desync = self._make_bool(
-            "fastforwardOnDesync", default=True, label="Fast-forward if I'm too far behind"
+            "fastforwardOnDesync", default=True, label=tr("settings-bool-fastfwd-on-desync")
         )
-        form.addRow("Fast-forward", self._fastfwd_on_desync)
+        form.addRow(tr("settings-row-fastforward"), self._fastfwd_on_desync)
 
         self._dont_slow_down_with_me = self._make_bool(
             "dontSlowDownWithMe", default=False,
-            label="Don't slow down on my account (others ignore me when computing position)"
+            label=tr("settings-bool-dont-slow-down"),
         )
-        form.addRow("Drift weighting", self._dont_slow_down_with_me)
+        form.addRow(tr("settings-row-drift-weighting"), self._dont_slow_down_with_me)
 
         self._slowdown_thresh = self._make_float(
             "slowdownThreshold",
@@ -144,7 +148,7 @@ class SettingsDialog(QtWidgets.QDialog):
             if hasattr(constants, "DEFAULT_SLOWDOWN_KICKIN_THRESHOLD") else 1.5,
             minimum=0.1, maximum=10.0, step=0.1, suffix=" s",
         )
-        form.addRow("Slowdown kick-in", self._slowdown_thresh)
+        form.addRow(tr("settings-row-slowdown-kickin"), self._slowdown_thresh)
 
         self._rewind_thresh = self._make_float(
             "rewindThreshold",
@@ -152,7 +156,7 @@ class SettingsDialog(QtWidgets.QDialog):
             if hasattr(constants, "DEFAULT_REWIND_THRESHOLD") else 4.0,
             minimum=1.0, maximum=120.0, step=0.5, suffix=" s",
         )
-        form.addRow("Rewind threshold", self._rewind_thresh)
+        form.addRow(tr("settings-row-rewind-threshold"), self._rewind_thresh)
 
         self._ff_thresh = self._make_float(
             "fastforwardThreshold",
@@ -160,7 +164,7 @@ class SettingsDialog(QtWidgets.QDialog):
             if hasattr(constants, "DEFAULT_FASTFORWARD_THRESHOLD") else 5.0,
             minimum=1.0, maximum=120.0, step=0.5, suffix=" s",
         )
-        form.addRow("Fast-forward threshold", self._ff_thresh)
+        form.addRow(tr("settings-row-ff-threshold"), self._ff_thresh)
 
         return widget
 
@@ -170,23 +174,21 @@ class SettingsDialog(QtWidgets.QDialog):
         form.setLabelAlignment(QtCore.Qt.AlignRight)
 
         self._ready_at_start = self._make_bool(
-            "readyAtStart", default=False, label="Mark me ready at startup"
+            "readyAtStart", default=False, label=tr("settings-bool-ready-at-start")
         )
-        form.addRow("Readiness", self._ready_at_start)
+        form.addRow(tr("settings-row-readiness"), self._ready_at_start)
 
         self._pause_on_leave = self._make_bool(
-            "pauseOnLeave", default=False, label="Pause when someone leaves the room"
+            "pauseOnLeave", default=False, label=tr("settings-bool-pause-on-leave")
         )
-        form.addRow("On leave", self._pause_on_leave)
+        form.addRow(tr("settings-row-on-leave"), self._pause_on_leave)
 
         # syncplay-modern: ready-gated sync replaces the upstream
         # unpauseAction modes. Playback unlocks only when every user
         # in the room is ready; the combo is gone.
-        unpause_info = QtWidgets.QLabel(
-            "Playback starts when every user in the room is ready."
-        )
+        unpause_info = QtWidgets.QLabel(tr("settings-info-unpause"))
         unpause_info.setWordWrap(True)
-        form.addRow("When I press play", unpause_info)
+        form.addRow(tr("settings-row-when-play"), unpause_info)
 
         self._autoplay_min_users = QtWidgets.QSpinBox()
         self._autoplay_min_users.setRange(1, 99)
@@ -197,29 +199,29 @@ class SettingsDialog(QtWidgets.QDialog):
         self._autoplay_min_users.valueChanged.connect(
             lambda v: self._persist("autoplayMinUsers", int(v))
         )
-        form.addRow("Min users for autoplay", self._autoplay_min_users)
+        form.addRow(tr("settings-row-min-users"), self._autoplay_min_users)
 
         self._autoplay_same_files = self._make_bool(
             "autoplayRequireSameFilenames", default=True,
-            label="Require everyone to have the same filename to autoplay",
+            label=tr("settings-bool-autoplay-same-files"),
         )
-        form.addRow("Autoplay safety", self._autoplay_same_files)
+        form.addRow(tr("settings-row-autoplay-safety"), self._autoplay_same_files)
 
         self._shared_playlist = self._make_bool(
             "sharedPlaylistEnabled", default=True,
-            label="Enable shared playlist (room-wide queue)",
+            label=tr("settings-bool-shared-playlist"),
         )
-        form.addRow("Playlist", self._shared_playlist)
+        form.addRow(tr("settings-row-playlist"), self._shared_playlist)
 
         self._loop_playlist = self._make_bool(
             "loopAtEndOfPlaylist", default=False,
-            label="Loop the playlist when the last item ends",
+            label=tr("settings-bool-loop-playlist"),
         )
         form.addRow("", self._loop_playlist)
 
         self._loop_single = self._make_bool(
             "loopSingleFiles", default=False,
-            label="Loop the current file when it ends",
+            label=tr("settings-bool-loop-single"),
         )
         form.addRow("", self._loop_single)
 
@@ -230,18 +232,13 @@ class SettingsDialog(QtWidgets.QDialog):
         form = QtWidgets.QFormLayout(widget)
         form.setLabelAlignment(QtCore.Qt.AlignRight)
 
-        intro = QtWidgets.QLabel(
-            "Syncplay normally tells the room what file (name, size, duration) "
-            "you have loaded so it can verify everyone watches the same thing. "
-            "If you'd rather not share the raw values, switch to hashed (the "
-            "room can only see whether files match) or disabled (no info at all)."
-        )
+        intro = QtWidgets.QLabel(tr("settings-privacy-intro"))
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #666; font-size: 11px;")
         form.addRow(intro)
 
         self._filename_priv = QtWidgets.QComboBox()
-        for label, value in _PRIVACY_OPTIONS:
+        for label, value in _privacy_options():
             self._filename_priv.addItem(label, userData=value)
         self._select_combo_data(
             self._filename_priv,
@@ -250,10 +247,10 @@ class SettingsDialog(QtWidgets.QDialog):
         self._filename_priv.currentIndexChanged.connect(
             lambda i: self._persist("filenamePrivacyMode", self._filename_priv.itemData(i))
         )
-        form.addRow("Filename privacy", self._filename_priv)
+        form.addRow(tr("settings-row-filename-priv"), self._filename_priv)
 
         self._filesize_priv = QtWidgets.QComboBox()
-        for label, value in _PRIVACY_OPTIONS:
+        for label, value in _privacy_options():
             self._filesize_priv.addItem(label, userData=value)
         self._select_combo_data(
             self._filesize_priv,
@@ -262,16 +259,16 @@ class SettingsDialog(QtWidgets.QDialog):
         self._filesize_priv.currentIndexChanged.connect(
             lambda i: self._persist("filesizePrivacyMode", self._filesize_priv.itemData(i))
         )
-        form.addRow("File size privacy", self._filesize_priv)
+        form.addRow(tr("settings-row-filesize-priv"), self._filesize_priv)
 
         self._only_trusted = self._make_bool(
             "onlySwitchToTrustedDomains", default=True,
-            label="Only auto-switch to URLs on the trusted domains list below",
+            label=tr("settings-bool-only-trusted"),
         )
-        form.addRow("Trusted domains", self._only_trusted)
+        form.addRow(tr("settings-row-trusted-domains"), self._only_trusted)
 
         self._trusted_domains = QtWidgets.QPlainTextEdit()
-        self._trusted_domains.setPlaceholderText("one domain per line")
+        self._trusted_domains.setPlaceholderText(tr("settings-trusted-domains-placeholder"))
         td = self._config.get("trustedDomains") or []
         if isinstance(td, list):
             self._trusted_domains.setPlainText("\n".join(td))
@@ -288,49 +285,46 @@ class SettingsDialog(QtWidgets.QDialog):
         form = QtWidgets.QFormLayout(widget)
         form.setLabelAlignment(QtCore.Qt.AlignRight)
 
-        intro = QtWidgets.QLabel(
-            "Toasts and on-screen-display warnings. The default fork "
-            "behaviour is quiet — flip these on if you want more nagging."
-        )
+        intro = QtWidgets.QLabel(tr("settings-notif-intro"))
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #666; font-size: 11px;")
         form.addRow(intro)
 
         self._show_osd = self._make_bool(
-            "showOSD", default=False, label="Show on-screen overlay messages at all"
+            "showOSD", default=False, label=tr("settings-bool-show-osd")
         )
-        form.addRow("OSD master", self._show_osd)
+        form.addRow(tr("settings-row-osd-master"), self._show_osd)
 
         self._show_osd_warnings = self._make_bool(
-            "showOSDWarnings", default=False, label="Show warning toasts"
+            "showOSDWarnings", default=False, label=tr("settings-bool-show-warnings")
         )
-        form.addRow("Warnings", self._show_osd_warnings)
+        form.addRow(tr("settings-row-warnings"), self._show_osd_warnings)
 
         self._show_slowdown_osd = self._make_bool(
-            "showSlowdownOSD", default=False, label="Show slowdown / speedup events"
+            "showSlowdownOSD", default=False, label=tr("settings-bool-show-slowdown")
         )
-        form.addRow("Sync events", self._show_slowdown_osd)
+        form.addRow(tr("settings-row-sync-events"), self._show_slowdown_osd)
 
         self._show_same_room_osd = self._make_bool(
-            "showSameRoomOSD", default=True, label="Show events from users in my room"
+            "showSameRoomOSD", default=True, label=tr("settings-bool-show-same-room")
         )
-        form.addRow("Same-room events", self._show_same_room_osd)
+        form.addRow(tr("settings-row-same-room"), self._show_same_room_osd)
 
         self._show_diff_room_osd = self._make_bool(
-            "showDifferentRoomOSD", default=False, label="Show events from other rooms"
+            "showDifferentRoomOSD", default=False, label=tr("settings-bool-show-diff-room")
         )
-        form.addRow("Cross-room events", self._show_diff_room_osd)
+        form.addRow(tr("settings-row-cross-room"), self._show_diff_room_osd)
 
         self._show_non_controller_osd = self._make_bool(
-            "showNonControllerOSD", default=False, label="Show events triggered by non-controllers"
+            "showNonControllerOSD", default=False, label=tr("settings-bool-show-non-controller")
         )
-        form.addRow("Non-controller events", self._show_non_controller_osd)
+        form.addRow(tr("settings-row-non-controller"), self._show_non_controller_osd)
 
         self._show_duration_notif = self._make_bool(
             "showDurationNotification", default=True,
-            label="Notify me when file durations don't match across the room",
+            label=tr("settings-bool-duration-notif"),
         )
-        form.addRow("Duration mismatch", self._show_duration_notif)
+        form.addRow(tr("settings-row-duration"), self._show_duration_notif)
 
         self._autohide_spin = QtWidgets.QSpinBox()
         self._autohide_spin.setRange(40, 30000)
@@ -340,9 +334,97 @@ class SettingsDialog(QtWidgets.QDialog):
         self._autohide_spin.valueChanged.connect(
             lambda v: self._persist("fullscreenAutohideMs", int(v))
         )
-        form.addRow("Fullscreen chat auto-hide", self._autohide_spin)
+        form.addRow(tr("settings-row-fullscreen-autohide"), self._autohide_spin)
 
         return widget
+
+    def _build_language_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
+        form = QtWidgets.QFormLayout(widget)
+        form.setLabelAlignment(QtCore.Qt.AlignRight)
+
+        intro = QtWidgets.QLabel(tr("settings-language-intro"))
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #666; font-size: 11px;")
+        form.addRow(intro)
+
+        self._language_combo = QtWidgets.QComboBox()
+        # Empty string is the "follow the OS" sentinel — matches how
+        # upstream ConfigurationGetter treats an unset `language` key,
+        # so persisting "" here re-enables auto-detection on the next
+        # launch instead of pinning the OS-detected value forever.
+        sys_code = system_language()
+        sys_native = available_languages().get(sys_code, sys_code)
+        self._language_combo.addItem(
+            tr("settings-language-auto", name=sys_native), userData=""
+        )
+        for code, native in sorted(available_languages().items(), key=lambda kv: kv[1].lower()):
+            self._language_combo.addItem(f"{native}  ({code})", userData=code)
+
+        # Render "Auto-detect" iff the user picked it (either the INI
+        # has no language, or this session has called set_language("")).
+        # Without this fallback an explicit pick of the OS language would
+        # be visually indistinguishable from Auto, hiding the user's
+        # actual choice.
+        configured = self._config.get("language") or ""
+        if not configured and is_auto_detect_active():
+            idx = 0
+        else:
+            idx = self._language_combo.findData(configured)
+            if idx < 0:
+                idx = 0
+        self._language_combo.setCurrentIndex(idx)
+        self._language_combo.currentIndexChanged.connect(self._on_language_changed)
+        form.addRow(tr("settings-language-label"), self._language_combo)
+
+        note = QtWidgets.QLabel(tr("settings-language-restart-note"))
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #888; font-size: 11px;")
+        form.addRow("", note)
+
+        return widget
+
+    def _on_language_changed(self, index: int) -> None:
+        code = self._language_combo.itemData(index) or ""
+        self._persist("language", code)
+        # Apply right away so any new getMessage() / tr() call in the
+        # current session picks up the choice without a relaunch.
+        set_language(code)
+        # Defer the rebuild: this slot returns first so the combo that
+        # fired this signal can finish its emission cleanly before the
+        # tab swap that destroys it. Qt is tolerant of mid-signal
+        # destruction but the QTimer hop avoids any surprises.
+        QtCore.QTimer.singleShot(0, self._rebuild_after_language_change)
+
+    def _rebuild_after_language_change(self) -> None:
+        """Re-create every tab in the new language, preserving location.
+
+        The user's settings live in ``self._config``, not in the widget
+        state, so re-running each ``_build_*_tab()`` produces an
+        equivalent UI in the new language without losing any unsaved
+        choice. The currently-selected tab index is restored so the
+        user isn't yanked back to Connection just for picking a
+        language.
+        """
+        current_idx = self._tabs.currentIndex()
+        self.setWindowTitle(tr("settings-window-title"))
+        self._tabs.clear()
+        self._tabs.addTab(self._build_connection_tab(), tr("settings-tab-connection"))
+        self._tabs.addTab(self._build_sync_tab(), tr("settings-tab-sync"))
+        self._tabs.addTab(self._build_behavior_tab(), tr("settings-tab-behavior"))
+        self._tabs.addTab(self._build_privacy_tab(), tr("settings-tab-privacy"))
+        self._tabs.addTab(self._build_notifications_tab(), tr("settings-tab-notifications"))
+        self._tabs.addTab(self._build_language_tab(), tr("settings-tab-language"))
+        if 0 <= current_idx < self._tabs.count():
+            self._tabs.setCurrentIndex(current_idx)
+        # Cascade to the owning MainWindow so menus, sidebar tabs, and
+        # in-place panel labels flip in step.
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "retranslate"):
+            try:
+                parent.retranslate()
+            except Exception:
+                pass
 
     # ==================================================================
     # Reusable widget factories
@@ -453,7 +535,7 @@ class PlaybackDialog(QtWidgets.QDialog):
         on_persist: Callable[[str, Any], None],
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Playback")
+        self.setWindowTitle(tr("playback-window-title"))
         self.setMinimumWidth(420)
 
         self._config = config
@@ -466,12 +548,12 @@ class PlaybackDialog(QtWidgets.QDialog):
         self._audio_combo = QtWidgets.QComboBox()
         self._audio_combo.setEnabled(False)
         self._audio_combo.currentIndexChanged.connect(self._on_audio_changed)
-        form.addRow("Audio track", self._audio_combo)
+        form.addRow(tr("playback-row-audio"), self._audio_combo)
 
         self._sub_combo = QtWidgets.QComboBox()
         self._sub_combo.setEnabled(False)
         self._sub_combo.currentIndexChanged.connect(self._on_subtitle_changed)
-        form.addRow("Subtitle track", self._sub_combo)
+        form.addRow(tr("playback-row-subtitle"), self._sub_combo)
 
         sub_delay_row = QtWidgets.QHBoxLayout()
         self._sub_delay_spin = QtWidgets.QSpinBox()
@@ -489,14 +571,14 @@ class PlaybackDialog(QtWidgets.QDialog):
         )
         self._sub_delay_spin.setValue(int(initial_delay))
         self._sub_delay_spin.valueChanged.connect(self._on_sub_delay_changed)
-        sub_delay_reset = QtWidgets.QPushButton("Reset")
+        sub_delay_reset = QtWidgets.QPushButton(tr("playback-reset"))
         sub_delay_reset.clicked.connect(lambda: self._sub_delay_spin.setValue(0))
         sub_delay_row.addWidget(self._sub_delay_spin, 1)
         sub_delay_row.addWidget(sub_delay_reset, 0)
         sub_delay_wrapper = QtWidgets.QWidget()
         sub_delay_wrapper.setLayout(sub_delay_row)
         sub_delay_row.setContentsMargins(0, 0, 0, 0)
-        form.addRow("Subtitle delay", sub_delay_wrapper)
+        form.addRow(tr("playback-row-sub-delay"), sub_delay_wrapper)
 
         # MainWindow's H/G WindowShortcut is suppressed while this
         # dialog is the active top-level window, so re-bind them here.
@@ -511,10 +593,10 @@ class PlaybackDialog(QtWidgets.QDialog):
                 )
             )
 
-        self._chat_on_video = QtWidgets.QCheckBox("Show chat on video")
+        self._chat_on_video = QtWidgets.QCheckBox(tr("playback-chat-on-video"))
         self._chat_on_video.setChecked(bool(self._config.get("chatOnVideoEnabled")))
         self._chat_on_video.toggled.connect(self._on_chat_on_video)
-        form.addRow("Chat overlay", self._chat_on_video)
+        form.addRow(tr("playback-row-chat-overlay"), self._chat_on_video)
 
         button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
         button_box.rejected.connect(self.accept)
@@ -620,15 +702,15 @@ class PlaybackDialog(QtWidgets.QDialog):
         try:
             result = player.set_audio_track(int(track_id))
         except Exception as exc:
-            self._notify_parent(f"Audio change failed: {exc}")
+            self._notify_parent(tr("toast-audio-change-fail", error=exc))
             return
         # libvlc returns 0 on success, -1 on error (typically a stale
         # track ID — libvlc re-parsed and renumbered between populate
         # and click). Surface that instead of silently doing nothing.
         if result == -1:
-            self._notify_parent(f"Audio change rejected by libvlc (id={track_id})")
+            self._notify_parent(tr("toast-audio-rejected", track_id=track_id))
         else:
-            self._notify_parent(f"Audio: {label}")
+            self._notify_parent(tr("toast-audio-track", label=label))
 
     def _on_subtitle_changed(self, index: int) -> None:
         track_id = self._sub_combo.itemData(index)
@@ -639,12 +721,12 @@ class PlaybackDialog(QtWidgets.QDialog):
         try:
             result = player.set_subtitle_track(int(track_id))
         except Exception as exc:
-            self._notify_parent(f"Subtitle change failed: {exc}")
+            self._notify_parent(tr("toast-subtitle-change-fail", error=exc))
             return
         if result == -1:
-            self._notify_parent(f"Subtitle change rejected by libvlc (id={track_id})")
+            self._notify_parent(tr("toast-subtitle-rejected", track_id=track_id))
         else:
-            self._notify_parent(f"Subtitle: {label}")
+            self._notify_parent(tr("toast-subtitle-track", label=label))
 
     def _notify_parent(self, text: str) -> None:
         """Show a brief toast on the MainWindow if available."""

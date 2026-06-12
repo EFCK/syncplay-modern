@@ -13,6 +13,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from syncplay.ui.modern import theme as theme_mod
 from syncplay.ui.modern.events import ErrorEvent, ErrorSeverity
+from syncplay.ui.modern.i18n import tr
 
 
 # Severity-coded colours used inline on each error line. Theme-aware so
@@ -50,8 +51,8 @@ class ErrorsPanel(QtWidgets.QWidget):
         self._log.setOpenExternalLinks(False)
         self._log.document().setDefaultStyleSheet(self._build_doc_css(self._theme))
 
-        clear_btn = QtWidgets.QPushButton("Clear", self)
-        clear_btn.clicked.connect(self._on_clear)
+        self._clear_btn = QtWidgets.QPushButton(tr("errors-clear"), self)
+        self._clear_btn.clicked.connect(self._on_clear)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -60,8 +61,11 @@ class ErrorsPanel(QtWidgets.QWidget):
 
         button_row = QtWidgets.QHBoxLayout()
         button_row.addStretch(1)
-        button_row.addWidget(clear_btn)
+        button_row.addWidget(self._clear_btn)
         layout.addLayout(button_row, 0)
+
+    def retranslate(self) -> None:
+        self._clear_btn.setText(tr("errors-clear"))
 
     # --- Theme ------------------------------------------------------------
 

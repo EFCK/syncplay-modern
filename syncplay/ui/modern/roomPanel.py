@@ -19,12 +19,13 @@ from __future__ import annotations
 
 import html
 import time
-from typing import Iterable
+from typing import Iterable, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from syncplay.ui.modern import theme as theme_mod
 from syncplay.ui.modern.events import RoomSnapshot
+from syncplay.ui.modern.i18n import tr
 
 
 class RoomPanel(QtWidgets.QWidget):
@@ -35,11 +36,21 @@ class RoomPanel(QtWidgets.QWidget):
         super().__init__(parent)
 
         self._theme: str = theme_mod.DEFAULT
-        self._room_label_text = "(no room)"
+        self._room_label_text = tr("room-none")
+        # Source of truth for the ready button's colour. Stored as bool
+        # so we don't string-match the localized label (which used to
+        # break the green/grey palette in non-English UIs).
+        self._is_ready = False
+        # Cache the latest snapshot so retranslate() can repaint
+        # snapshot-driven labels (room name, ready button text, ready
+        # tooltip) without waiting for the next server update.
+        self._last_snapshot: Optional["RoomSnapshot"] = None
 
         self._room_label = QtWidgets.QLabel(self._room_label_text)
         self._user_table = QtWidgets.QTableWidget(0, 3)
-        self._user_table.setHorizontalHeaderLabels(["", "User", "File"])
+        self._user_table.setHorizontalHeaderLabels(
+            ["", tr("room-col-user"), tr("room-col-file")]
+        )
         self._user_table.verticalHeader().setVisible(False)
         self._user_table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         self._user_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -50,7 +61,7 @@ class RoomPanel(QtWidgets.QWidget):
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
 
-        self._log_header = QtWidgets.QLabel("Activity")
+        self._log_header = QtWidgets.QLabel(tr("room-activity"))
 
         self._log = QtWidgets.QTextBrowser(self)
         self._log.setOpenExternalLinks(False)
@@ -59,7 +70,7 @@ class RoomPanel(QtWidgets.QWidget):
         self._apply_label_styles(self._theme)
         self._log.document().setDefaultStyleSheet(self._build_log_css(self._theme))
 
-        self._ready_btn = QtWidgets.QPushButton("I'm ready")
+        self._ready_btn = QtWidgets.QPushButton(tr("ready-join"))
         self._ready_btn.setMinimumHeight(36)
         self._ready_btn.clicked.connect(self.readyToggleRequested.emit)
 
@@ -87,6 +98,22 @@ class RoomPanel(QtWidgets.QWidget):
         # Re-colour the "—" placeholder cell in any existing rows.
         self._refresh_empty_filename_cells()
 
+    def retranslate(self) -> None:
+        self._user_table.setHorizontalHeaderLabels(
+            ["", tr("room-col-user"), tr("room-col-file")]
+        )
+        self._log_header.setText(tr("room-activity"))
+        # Repaint snapshot-driven labels in the new language. If we
+        # haven't seen a snapshot yet, fall back to the empty-room
+        # placeholder + the default "ready" button label.
+        snap = self._last_snapshot
+        if snap is None:
+            self._room_label.setText(tr("room-none"))
+            self._ready_btn.setText(tr("ready-join"))
+            self._ready_btn.setToolTip("")
+        else:
+            self.set_snapshot(snap)
+
     def _apply_label_styles(self, theme: str) -> None:
         p = theme_mod.palette(theme)
         self._room_label.setStyleSheet(
@@ -113,9 +140,7 @@ class RoomPanel(QtWidgets.QWidget):
         # Mirror the same colour choice set_snapshot uses, picked from
         # the current theme's palette so both states stay readable.
         p = theme_mod.palette(self._theme)
-        # The label changes to "Not Ready (watch alone)" when the user
-        # is currently ready (i.e. clicking would un-ready them).
-        if self._ready_btn.text().startswith("Not Ready"):
+        if self._is_ready:
             bg = p["ready"]   # currently ready → green-ish
         else:
             bg = "#555555" if theme_mod.normalize(self._theme) == theme_mod.DARK else "#444444"
@@ -134,7 +159,10 @@ class RoomPanel(QtWidgets.QWidget):
     # --- Public API --------------------------------------------------------
 
     def set_snapshot(self, snap: RoomSnapshot) -> None:
-        self._room_label.setText(f"Room: {snap.room}" if snap.room else "(no room)")
+        self._last_snapshot = snap
+        self._room_label.setText(
+            tr("room-label", room=snap.room) if snap.room else tr("room-none")
+        )
 
         p = theme_mod.palette(self._theme)
         empty_color = QtGui.QBrush(QtGui.QColor(p["filename-empty"]))
@@ -176,14 +204,15 @@ class RoomPanel(QtWidgets.QWidget):
         # syncplay-modern: ready-gated sync — the label spells out
         # the consequence so the user knows pressing it changes
         # whether they're in the group sync, not just a flag.
-        if snap.is_ready:
-            self._ready_btn.setText("Not Ready (watch alone)")
+        self._is_ready = bool(snap.is_ready)
+        if self._is_ready:
+            self._ready_btn.setText(tr("ready-leave"))
         else:
-            self._ready_btn.setText("Ready (join sync)")
+            self._ready_btn.setText(tr("ready-join"))
         self._refresh_ready_button_style()
         self._ready_btn.setEnabled(snap.current_user is not None and self_has_file)
         self._ready_btn.setToolTip(
-            "" if self_has_file else "Open a video file before marking yourself ready"
+            "" if self_has_file else tr("ready-needs-file")
         )
 
     def append_log_line(self, html_class: str, text: str, timestamp: float | None = None) -> None:
