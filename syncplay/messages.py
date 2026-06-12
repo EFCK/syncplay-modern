@@ -78,21 +78,71 @@ def getMissingStrings():
     return missingStrings
 
 
-def getInitialLanguage():
+def _detect_os_locale_code():
+    """Return a locale-code string for the OS (e.g. ``"pt_PT"``), or ``""``.
+
+    Prefers the modern, non-deprecated APIs. Order:
+    1. Frozen macOS app → Qt's ``QLocale.system().uiLanguages()`` (matches
+       the user's System Settings choice rather than POSIX env vars,
+       which py2app bundles often leave unset).
+    2. POSIX env vars (``LC_ALL`` / ``LC_MESSAGES`` / ``LANG``) — most
+       reliable on Linux, also honoured by macOS Terminal sessions.
+    3. ``locale.getlocale()`` — what the deprecated
+       ``locale.getdefaultlocale()`` was rewritten to defer to.
+    """
+    import sys
+    frozen = getattr(sys, 'frozen', '')
+    if frozen and frozen in 'macosx_app':
+        # Prefer PySide6 (the modern fork's GUI binding); fall back to
+        # PySide2 so this still works in any pre-fork environment that
+        # only has PySide2 available.
+        try:
+            from PySide6.QtCore import QLocale  # type: ignore
+        except ImportError:
+            from PySide2.QtCore import QLocale  # type: ignore
+        try:
+            tags = QLocale.system().uiLanguages()
+            if tags:
+                return tags[0].replace('-', '_')
+        except Exception:
+            pass
+
+    import os
+    for var in ('LC_ALL', 'LC_MESSAGES', 'LANG'):
+        raw = os.environ.get(var)
+        if raw and raw not in ('C', 'POSIX'):
+            return raw.split('.')[0].split('@')[0]
+
     try:
-        import sys
-        frozen = getattr(sys, 'frozen', '')
-        if frozen and frozen in 'macosx_app':
-            from PySide2.QtCore import QLocale
-            initialLanguage = QLocale.system().uiLanguages()[0].split('-')[0]
-        else:
-            import locale
-            initialLanguage = locale.getdefaultlocale()[0].split("_")[0]
-        if initialLanguage not in messages:
-            initialLanguage = constants.FALLBACK_INITIAL_LANGUAGE
-    except:
-        initialLanguage = constants.FALLBACK_INITIAL_LANGUAGE
-    return initialLanguage
+        import locale
+        code, _enc = locale.getlocale()
+        if code:
+            return code
+    except (TypeError, ValueError):
+        pass
+    return ""
+
+
+def getInitialLanguage():
+    """Pick a language code present in ``messages`` based on the OS.
+
+    Tries the full code first (so ``pt_PT`` stays Portuguese-Portugal
+    rather than collapsing to ``pt`` and missing the table); falls back
+    to the language-only prefix; finally falls back to the project's
+    configured default.
+    """
+    try:
+        raw = _detect_os_locale_code()
+        if raw:
+            full = raw.replace('-', '_')
+            if full in messages:
+                return full
+            short = full.split('_')[0]
+            if short in messages:
+                return short
+    except Exception:
+        pass
+    return constants.FALLBACK_INITIAL_LANGUAGE
 
 
 def isValidLanguage(language):
